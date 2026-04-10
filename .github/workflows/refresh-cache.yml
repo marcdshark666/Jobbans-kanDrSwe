@@ -1,0 +1,37 @@
+name: 🔄 Uppdatera Jobbcache (var 30:e min)
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Installera beroenden
+        run: npm ci
+
+      - name: Bygg jobbcache
+        run: node scripts/build-cache.js
+        env:
+          NODE_ENV: production
+
+      - name: Spara cache till repot
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git add data/jobs-cache.json
+          git diff --staged --quiet || git commit -m "chore: uppdatera jobbcache [skip ci]"
+          git push

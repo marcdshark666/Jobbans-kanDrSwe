@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Läkarjobb-portal för underläkare, BT-läkare, legitimerade läkare och specialister i Sverige. Uppdateras automatiskt var 30:e minut." />
+  <title>LäkarJobb.se — Sveriges läkarportal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- HEADER -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="logo-group">
+        <div class="logo-icon">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+            <circle cx="18" cy="18" r="18" fill="url(#logoGrad)" opacity="0.15"/>
+            <path d="M18 8v20M8 18h20" stroke="url(#logoGrad)" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="18" cy="18" r="5" stroke="url(#logoGrad)" stroke-width="2"/>
+            <defs>
+              <linearGradient id="logoGrad" x1="0" y1="0" x2="36" y2="36">
+                <stop stop-color="#6C63FF"/>
+                <stop offset="1" stop-color="#00D4AA"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <div class="logo-text-group">
+          <span class="logo-title">LäkarJobb</span>
+          <span class="logo-subtitle">Sveriges läkarportal</span>
+        </div>
+      </div>
+
+      <div class="header-status" id="statusBar">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">Ansluter...</span>
+        <span class="status-count" id="statusCount"></span>
+      </div>
+
+      <div class="header-actions">
+        <button class="btn-refresh" id="refreshBtn" onclick="refreshJobs()">
+          <svg class="btn-icon" viewBox="0 0 20 20" fill="none"><path d="M4 10a6 6 0 0111.3-2.7M16 10a6 6 0 01-11.3 2.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M15 7.3l1.3-2.1.7 2.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Uppdatera
+        </button>
+        <div class="auto-refresh-badge" id="autoRefreshBadge">
+          <span class="pulse-dot"></span>
+          Auto var 30 min
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN LAYOUT -->
+  <div class="app-layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <!-- CATEGORIES -->
+      <div class="sidebar-section">
+        <h3 class="sidebar-title">Kategori</h3>
+        <nav class="cat-nav">
+          <button class="cat-btn active" data-cat="all" onclick="setCategory(this,'all')">
+            <span class="cat-icon">🏥</span>
+            <span class="cat-label">Alla jobb</span>
+            <span class="cat-count" id="cnt-all">0</span>
+          </button>
+          <button class="cat-btn" data-cat="underlakar" onclick="setCategory(this,'underlakar')">
+            <span class="cat-icon">👨‍⚕️</span>
+            <span class="cat-label">Underläkare</span>
+            <span class="cat-count" id="cnt-underlakar">0</span>
+          </button>
+          <button class="cat-btn" data-cat="bt" onclick="setCategory(this,'bt')">
+            <span class="cat-icon">🩺</span>
+            <span class="cat-label">BT-läkare</span>
+            <span class="cat-count" id="cnt-bt">0</span>
+          </button>
+          <button class="cat-btn" data-cat="legitimerad" onclick="setCategory(this,'legitimerad')">
+            <span class="cat-icon">📋</span>
+            <span class="cat-label">Legitimerad läkare</span>
+            <span class="cat-count" id="cnt-legitimerad">0</span>
+          </button>
+          <button class="cat-btn" data-cat="specialist" onclick="setCategory(this,'specialist')">
+            <span class="cat-icon">⭐</span>
+            <span class="cat-label">Specialistläkare</span>
+            <span class="cat-count" id="cnt-specialist">0</span>
+          </button>
+          <button class="cat-btn" data-cat="other" onclick="setCategory(this,'other')">
+            <span class="cat-icon">📌</span>
+            <span class="cat-label">Övrigt</span>
+            <span class="cat-count" id="cnt-other">0</span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- REGION FILTER -->
+      <div class="sidebar-section">
+        <h3 class="sidebar-title">Region</h3>
+        <nav class="region-nav">
+          <button class="region-btn active" data-region="all" onclick="setRegion(this,'all')">
+            <span>🇸🇪</span> Hela Sverige
+          </button>
+          <button class="region-btn" data-region="stockholm" onclick="setRegion(this,'stockholm')">
+            <span>📍</span> Stockholm
+          </button>
+        </nav>
+      </div>
+
+      <!-- SOURCES FILTER -->
+      <div class="sidebar-section">
+        <h3 class="sidebar-title">Jobbkällor</h3>
+        <div class="source-list" id="sourceList"></div>
+      </div>
+
+      <!-- STATUS TABS -->
+      <div class="sidebar-section">
+        <h3 class="sidebar-title">Mina jobb</h3>
+        <nav class="status-nav">
+          <button class="status-btn" data-view="favorites" onclick="setView(this,'favorites')">
+            <span>⭐</span> Bokmärken
+            <span class="status-badge" id="cnt-favorites">0</span>
+          </button>
+          <button class="status-btn" data-view="applied" onclick="setView(this,'applied')">
+            <span>📨</span> Sökt
+            <span class="status-badge" id="cnt-applied">0</span>
+          </button>
+          <button class="status-btn" data-view="interview" onclick="setView(this,'interview')">
+            <span>🎯</span> Intervju
+            <span class="status-badge" id="cnt-interview">0</span>
+          </button>
+          <button class="status-btn" data-view="rejected" onclick="setView(this,'rejected')">
+            <span>❌</span> Avböjt
+            <span class="status-badge" id="cnt-rejected">0</span>
+          </button>
+        </nav>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+      <!-- SEARCH + FILTERS -->
+      <div class="toolbar">
+        <div class="search-wrap">
+          <svg class="search-icon" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.8"/><path d="M13 13l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <input class="search-input" id="searchInput" type="search" placeholder="Sök titel, plats eller källa..." oninput="filterJobs()" />
+        </div>
+        <div class="view-toggle">
+          <button class="view-btn active" id="viewGrid" onclick="setLayout('grid')" title="Rutnät">
+            <svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+          </button>
+          <button class="view-btn" id="viewList" onclick="setLayout('list')" title="Lista">
+            <svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="2.5" rx="1"/><rect x="1" y="6.5" width="14" height="2.5" rx="1"/><rect x="1" y="11" width="14" height="2.5" rx="1"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- ACTIVE VIEW HEADER -->
+      <div class="view-header" id="viewHeader">
+        <h2 class="view-title" id="viewTitle">Alla jobb</h2>
+        <span class="view-subtitle" id="viewSubtitle">Uppdateras automatiskt</span>
+      </div>
+
+      <!-- LOADING STATE -->
+      <div class="loading-state" id="loadingState">
+        <div class="loader-ring"></div>
+        <p>Hämtar jobb från 12+ källor...</p>
+      </div>
+
+      <!-- EMPTY STATE -->
+      <div class="empty-state" id="emptyState" style="display:none">
+        <div class="empty-icon">🔍</div>
+        <h3>Inga jobb hittades</h3>
+        <p>Prova att byta filter eller tryck Uppdatera</p>
+      </div>
+
+      <!-- JOB GRID / LIST -->
+      <div class="job-grid" id="jobGrid"></div>
+
+      <!-- LAST UPDATED -->
+      <div class="last-updated" id="lastUpdated"></div>
+    </main>
+  </div>
+
+  <!-- TOAST -->
+  <div class="toast" id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

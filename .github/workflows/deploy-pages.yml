@@ -1,0 +1,47 @@
+name: 🚀 Publicera till GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Installera beroenden
+        run: npm ci
+
+      - name: Bygg initial jobbcache
+        run: node scripts/build-cache.js || echo "Cache build failed, using empty cache"
+
+      - name: Konfigurera Pages
+        uses: actions/configure-pages@v4
+
+      - name: Ladda upp artefakt (public + data)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: |
+            public
+            data
+
+      - name: Deploya till GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

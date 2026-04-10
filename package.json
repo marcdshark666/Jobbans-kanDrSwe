@@ -1,0 +1,23 @@
+{
+  "name": "lakar-jobb-portal",
+  "version": "2.0.0",
+  "description": "Läkarjobb-portal för underläkare, BT-läkare, legitimerade läkare och specialister i Sverige",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build-cache": "node scripts/build-cache.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": ["läkare", "jobb", "portal", "underläkare", "specialistläkare"],
+  "author": "marcdshark666",
+  "license": "MIT"
+}
