@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 
 import {
+  buildRoleSummary,
   buildDuplicateHintKey,
   buildHistoryKey,
   buildJobId,
@@ -9,7 +10,9 @@ import {
   cleanUrl,
   createHistoryEntry,
   extractDate,
+  extractContactEntries,
   extractLocation,
+  inferRoleLabel,
   isIgnoredHref,
   isNoiseTitle,
   matchesStockholm,
@@ -145,6 +148,122 @@ async function fetchHtml(source) {
   }
 }
 
+function extractDocumentText(html = "") {
+  const $ = cheerio.load(html);
+  $("script, style, noscript, svg").remove();
+  return normalizeWhitespace($("body").text());
+}
+
+function extractRelatedContactLinks(html = "", currentUrl = "") {
+  const $ = cheerio.load(html);
+  const current = new URL(currentUrl);
+  const results = [];
+  const seen = new Set();
+
+  $("a[href]").each((_, element) => {
+    const href = absolutize(currentUrl, $(element).attr("href"));
+    if (!href || seen.has(href)) {
+      return;
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(href);
+    } catch {
+      return;
+    }
+
+    if (parsed.origin !== current.origin) {
+      return;
+    }
+
+    const label = normalizeWhitespace($(element).text());
+    const combined = `${label} ${href}`.toLowerCase();
+    if (!/(kontakt|contact|om oss|mottagning|verksamhet|medarbetare|team|klinik)/i.test(combined)) {
+      return;
+    }
+
+    if (/(jobb|career|karriar|lediga-jobb|jobID:|apply|ansok)/i.test(combined)) {
+      return;
+    }
+
+    seen.add(href);
+    results.push(href);
+  });
+
+  return results.slice(0, 2);
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let currentIndex = 0;
+
+  async function worker() {
+    while (currentIndex < items.length) {
+      const index = currentIndex;
+      currentIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+async function enrichJobFromDetail(job, source) {
+  let detailText = "";
+  let relatedContactText = "";
+
+  try {
+    const html = await fetchHtml({ ...source, url: job.link });
+    detailText = extractDocumentText(html);
+
+    let contacts = extractContactEntries(detailText, source.name);
+
+    if (!contacts.length) {
+      const relatedLinks = extractRelatedContactLinks(html, job.link);
+
+      for (const relatedLink of relatedLinks) {
+        try {
+          const relatedHtml = await fetchHtml({ ...source, url: relatedLink });
+          const relatedText = extractDocumentText(relatedHtml);
+          relatedContactText = `${relatedContactText} ${relatedText}`.trim();
+          contacts = contacts.concat(extractContactEntries(relatedText, source.name));
+
+          if (contacts.length >= 3) {
+            break;
+          }
+        } catch {
+          // Best effort only for fallback contact pages.
+        }
+      }
+    }
+
+    const combinedContext = normalizeWhitespace(
+      [job.rawContext, detailText, relatedContactText].filter(Boolean).join(" | ")
+    );
+    const upgradedCategory = classifyJob(job.title, combinedContext) ?? job.category;
+
+    return {
+      ...job,
+      category: upgradedCategory,
+      roleLabel: inferRoleLabel(job.title, combinedContext),
+      roleSummary: buildRoleSummary(job.title, combinedContext),
+      detailSnippet: detailText.slice(0, 320),
+      contacts,
+      rawContext: combinedContext,
+    };
+  } catch {
+    return {
+      ...job,
+      roleLabel: inferRoleLabel(job.title, job.rawContext),
+      roleSummary: buildRoleSummary(job.title, job.rawContext),
+      contacts: [],
+    };
+  }
+}
+
 function absolutize(sourceUrl, href = "") {
   try {
     return new URL(href, sourceUrl).toString();
@@ -272,7 +391,7 @@ function extractCandidates(html, source) {
       return;
     }
 
-    if (/sjukskoterska|psykolog|arbetsterapeut|fysioterapeut|underskoterska/i.test(title)) {
+    if (/sjukskoterska|psykolog|arbetsterapeut|fysioterapeut|underskoterska|tandlakare/i.test(title)) {
       return;
     }
 
@@ -284,11 +403,14 @@ function extractCandidates(html, source) {
       sourceUrl: source.url,
       title,
       category,
+      roleLabel: inferRoleLabel(title, combined),
+      roleSummary: buildRoleSummary(title, combined),
       location: extractLocation(combined),
       publishedAt: extractDate(combined),
       link: cleanedHref,
       stockholmMatch: matchesStockholm(combined),
       rawContext: combined,
+      contacts: [],
     });
   });
 
@@ -389,21 +511,25 @@ function buildStats(jobs, sourceSummaries) {
 export async function aggregateJobs({ previousHistory = {} } = {}) {
   const sourceSummaries = [];
   const collectedJobs = [];
+  const detailConcurrency = 4;
 
   for (const source of sources) {
     try {
       const html = await fetchHtml(source);
       const sourceJobs = dedupeWithinRefresh(extractCandidates(html, source));
+      const enrichedSourceJobs = await mapWithConcurrency(sourceJobs, detailConcurrency, (job) =>
+        enrichJobFromDetail(job, source)
+      );
 
-      collectedJobs.push(...sourceJobs);
+      collectedJobs.push(...enrichedSourceJobs);
       sourceSummaries.push({
         id: source.id,
         name: source.name,
         url: source.url,
         status: "ok",
-        count: sourceJobs.length,
-        message: sourceJobs.length
-          ? `${sourceJobs.length} relevanta läkarjobb hittades`
+        count: enrichedSourceJobs.length,
+        message: enrichedSourceJobs.length
+          ? `${enrichedSourceJobs.length} relevanta läkarjobb hittades`
           : "Inga relevanta läkarjobb hittades just nu",
       });
     } catch (error) {

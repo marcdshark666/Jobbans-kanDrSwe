@@ -28,6 +28,7 @@ const pipelineViews = [
   { id: "applied", label: "Sökt" },
   { id: "interview", label: "Intervju" },
   { id: "rejected", label: "Avböjt" },
+  { id: "not_interested", label: "Ej intressant" },
 ];
 
 const ageFilters = [
@@ -43,7 +44,7 @@ const sortOptions = [
   { id: "title", label: "Titel A-Ö" },
 ];
 
-const storageKey = "doctor-jobs-radar-v3";
+const storageKey = "doctor-jobs-radar-v4";
 const unknownLocationLabels = new Set(["", "okänd ort", "okand ort", "unknown", "remote", "distans"]);
 
 const state = {
@@ -61,9 +62,18 @@ const state = {
   activeSources: new Set(),
   bookmarks: new Set(),
   statuses: {},
+  accounts: {},
+  activeAccountId: "",
+  activeAccountName: "",
 };
 
 const elements = {
+  accountInput: document.querySelector("#accountInput"),
+  loginButton: document.querySelector("#loginButton"),
+  signoutButton: document.querySelector("#signoutButton"),
+  accountBadge: document.querySelector("#accountBadge"),
+  accountHint: document.querySelector("#accountHint"),
+  accountPresets: document.querySelector("#accountPresets"),
   templateButtons: document.querySelector("#templateButtons"),
   pipelineTabs: document.querySelector("#pipelineTabs"),
   categoryFilters: document.querySelector("#categoryFilters"),
@@ -82,6 +92,12 @@ const elements = {
   heroSourceCount: document.querySelector("#heroSourceCount"),
   heroNextRefresh: document.querySelector("#heroNextRefresh"),
   jobCardTemplate: document.querySelector("#jobCardTemplate"),
+  generatorAdInput: document.querySelector("#generatorAdInput"),
+  generatorProfileInput: document.querySelector("#generatorProfileInput"),
+  generatorLetterOutput: document.querySelector("#generatorLetterOutput"),
+  generateLetterButton: document.querySelector("#generateLetterButton"),
+  copyLetterButton: document.querySelector("#copyLetterButton"),
+  generatorStatus: document.querySelector("#generatorStatus"),
 };
 
 function normalizeLookup(value = "") {
@@ -260,6 +276,70 @@ function getPublicationMeta(job) {
   };
 }
 
+function normalizeAccountId(value = "") {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40);
+}
+
+function createAccountProfile(accountName = "") {
+  return {
+    name: accountName,
+    bookmarks: [],
+    statuses: {},
+    lastUsedAt: new Date().toISOString(),
+  };
+}
+
+function saveActiveAccountState() {
+  if (!state.activeAccountId) {
+    return;
+  }
+
+  state.accounts[state.activeAccountId] = {
+    ...(state.accounts[state.activeAccountId] ?? createAccountProfile(state.activeAccountName)),
+    name: state.activeAccountName || state.activeAccountId,
+    bookmarks: Array.from(state.bookmarks),
+    statuses: state.statuses,
+    lastUsedAt: new Date().toISOString(),
+  };
+}
+
+function loadAccountState(accountId) {
+  const account = accountId ? state.accounts[accountId] : null;
+  state.bookmarks = new Set(account?.bookmarks ?? []);
+  state.statuses = account?.statuses ?? {};
+}
+
+function setActiveAccount(accountName) {
+  saveActiveAccountState();
+
+  const normalizedId = normalizeAccountId(accountName);
+  if (!normalizedId) {
+    state.activeAccountId = "";
+    state.activeAccountName = "";
+    state.bookmarks = new Set();
+    state.statuses = {};
+    return;
+  }
+
+  if (!state.accounts[normalizedId]) {
+    state.accounts[normalizedId] = createAccountProfile(accountName.trim());
+  }
+
+  state.activeAccountId = normalizedId;
+  state.activeAccountName = state.accounts[normalizedId].name || accountName.trim() || normalizedId;
+  loadAccountState(normalizedId);
+}
+
+function isSignedIn() {
+  return Boolean(state.activeAccountId);
+}
+
 function loadStoredState() {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey));
@@ -267,12 +347,28 @@ function loadStoredState() {
       return;
     }
 
-    state.bookmarks = new Set(parsed.bookmarks ?? []);
-    state.statuses = parsed.statuses ?? {};
     state.activeTemplate = parsed.activeTemplate ?? state.activeTemplate;
     state.activePipeline = parsed.activePipeline ?? state.activePipeline;
     state.activeAgeFilter = parsed.activeAgeFilter ?? state.activeAgeFilter;
     state.activeSort = parsed.activeSort ?? state.activeSort;
+    state.accounts = parsed.accounts ?? {};
+    if (
+      Object.keys(state.accounts).length === 0 &&
+      ((parsed.bookmarks ?? []).length || Object.keys(parsed.statuses ?? {}).length)
+    ) {
+      state.accounts["lokal-profil"] = {
+        name: "lokal-profil",
+        bookmarks: parsed.bookmarks ?? [],
+        statuses: parsed.statuses ?? {},
+        lastUsedAt: new Date().toISOString(),
+      };
+      state.activeAccountId = "lokal-profil";
+      state.activeAccountName = "lokal-profil";
+    } else {
+      state.activeAccountId = parsed.activeAccountId ?? "";
+      state.activeAccountName =
+        parsed.activeAccountName ?? state.accounts[state.activeAccountId]?.name ?? "";
+    }
 
     const restoredCategories = (parsed.activeCategories ?? []).filter((item) =>
       categories.includes(item)
@@ -282,23 +378,26 @@ function loadStoredState() {
     }
 
     state.activeSources = new Set(parsed.activeSources ?? []);
+    loadAccountState(state.activeAccountId);
   } catch (error) {
     console.warn("Kunde inte läsa sparat tillstånd", error);
   }
 }
 
 function persistState() {
+  saveActiveAccountState();
   localStorage.setItem(
     storageKey,
     JSON.stringify({
-      bookmarks: Array.from(state.bookmarks),
-      statuses: state.statuses,
       activeTemplate: state.activeTemplate,
       activePipeline: state.activePipeline,
       activeAgeFilter: state.activeAgeFilter,
       activeSort: state.activeSort,
       activeCategories: Array.from(state.activeCategories),
       activeSources: Array.from(state.activeSources),
+      accounts: state.accounts,
+      activeAccountId: state.activeAccountId,
+      activeAccountName: state.activeAccountName,
     })
   );
 }
@@ -324,6 +423,11 @@ function buildSourceEntries(groupJobs) {
       publicationLabel: publication.publicationLabel,
       detectedAt: job.detectedAt,
       firstSeenAt: job.firstSeenAt,
+      roleSummary: job.roleSummary ?? "",
+      roleLabel: job.roleLabel ?? job.category ?? "Läkare",
+      category: job.category ?? "Legitimerad läkare",
+      detailSnippet: job.detailSnippet ?? "",
+      contacts: Array.isArray(job.contacts) ? job.contacts : [],
     };
   });
 
@@ -349,6 +453,67 @@ function buildSourceEntries(groupJobs) {
   return entries;
 }
 
+function getCategorySpecificity(category = "") {
+  const map = {
+    Specialist: 4,
+    "BT-läkare": 3,
+    Underläkare: 2,
+    "Legitimerad läkare": 1,
+  };
+
+  return map[category] ?? 0;
+}
+
+function pickPreferredCategory(groupJobs) {
+  return [...groupJobs]
+    .sort((left, right) => getCategorySpecificity(right.category) - getCategorySpecificity(left.category))[0]
+    ?.category;
+}
+
+function pickRoleSummary(groupJobs, sourceEntries) {
+  return (
+    sourceEntries.find((entry) => entry.roleSummary)?.roleSummary ??
+    groupJobs.find((job) => job.roleSummary)?.roleSummary ??
+    "Ingen kort sammanfattning kunde utläsas ännu."
+  );
+}
+
+function pickRoleLabel(groupJobs, sourceEntries, category) {
+  return (
+    sourceEntries.find((entry) => entry.roleLabel)?.roleLabel ??
+    groupJobs.find((job) => job.roleLabel)?.roleLabel ??
+    category ??
+    "Läkare"
+  );
+}
+
+function buildContactKey(contact) {
+  return [
+    normalizeLookup(contact.name || ""),
+    normalizeLookup(contact.email || ""),
+    normalizeLookup(contact.phone || ""),
+  ].join("|");
+}
+
+function combineContacts(groupJobs) {
+  const combined = [];
+  const seen = new Set();
+
+  groupJobs.forEach((job) => {
+    (job.contacts ?? []).forEach((contact) => {
+      const key = buildContactKey(contact);
+      if (!key || seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      combined.push(contact);
+    });
+  });
+
+  return combined;
+}
+
 function pickBestLocation(groupJobs, sourceEntries) {
   const candidateFromEntries = sourceEntries.find((entry) => !isUnknownLocation(entry.location));
   if (candidateFromEntries) {
@@ -368,6 +533,7 @@ function buildMergedJob(groupKey, groupJobs) {
   const primaryEntry = sourceEntries[0] ?? null;
   const sourceIds = Array.from(new Set(sourceEntries.map((entry) => entry.sourceId)));
   const sourceNames = Array.from(new Set(sourceEntries.map((entry) => entry.sourceName)));
+  const category = pickPreferredCategory(groupJobs) ?? "Legitimerad läkare";
   const oldestPublicationDate = sourceEntries.find((entry) => entry.referenceDate)?.referenceDate ?? null;
   const latestPublicationDate = [...sourceEntries].reverse().find((entry) => entry.referenceDate)?.referenceDate ?? null;
   const firstSeenAt =
@@ -377,12 +543,17 @@ function buildMergedJob(groupKey, groupJobs) {
       .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
   const timesSeenAcrossRefreshes = Math.max(...groupJobs.map((job) => job.timesSeenAcrossRefreshes ?? 1), 1);
   const location = pickBestLocation(groupJobs, sourceEntries);
+  const contacts = combineContacts(groupJobs);
+  const roleSummary = pickRoleSummary(groupJobs, sourceEntries);
+  const roleLabel = pickRoleLabel(groupJobs, sourceEntries, category);
 
   return {
     id: `group:${groupKey}`,
     groupKey,
     title: primaryEntry?.title ?? groupJobs[0]?.title ?? "Okänd annons",
-    category: groupJobs[0]?.category ?? "Legitimerad läkare",
+    category,
+    roleLabel,
+    roleSummary,
     location,
     stockholmMatch: groupJobs.some((job) => job.stockholmMatch),
     sourceEntries,
@@ -397,10 +568,19 @@ function buildMergedJob(groupKey, groupJobs) {
     duplicateCount: sourceEntries.length,
     seenBefore: groupJobs.some((job) => job.seenBefore),
     firstSeenAt,
+    contacts,
     firstSeenSource:
       groupJobs.find((job) => job.firstSeenSource)?.firstSeenSource ?? sourceNames[0] ?? "Okänd källa",
     timesSeenAcrossRefreshes,
-    searchText: [primaryEntry?.title ?? "", location, groupJobs[0]?.category ?? "", ...sourceNames]
+    searchText: [
+      primaryEntry?.title ?? "",
+      location,
+      category,
+      roleLabel,
+      roleSummary,
+      ...sourceNames,
+      ...contacts.flatMap((contact) => [contact.name ?? "", contact.role ?? "", contact.email ?? ""]),
+    ]
       .join(" ")
       .toLowerCase(),
   };
@@ -552,6 +732,7 @@ function getStatusCounts() {
     applied: 0,
     interview: 0,
     rejected: 0,
+    not_interested: 0,
   };
 
   getGroupedJobs().forEach((job) => {
@@ -571,6 +752,10 @@ function getStatusCounts() {
 
     if (status === "rejected") {
       counts.rejected += 1;
+    }
+
+    if (status === "not_interested") {
+      counts.not_interested += 1;
     }
 
     if (state.bookmarks.has(job.id)) {
@@ -643,6 +828,7 @@ function renderPipelineTabs() {
     applied: statusCounts.applied,
     interview: statusCounts.interview,
     rejected: statusCounts.rejected,
+    not_interested: statusCounts.not_interested,
   };
 
   elements.pipelineTabs.innerHTML = "";
@@ -742,6 +928,54 @@ function renderSourceList() {
   elements.sourceList.append(footer);
 }
 
+function renderAccountPanel() {
+  if (elements.accountInput) {
+    elements.accountInput.value = state.activeAccountName;
+  }
+
+  if (elements.accountBadge) {
+    elements.accountBadge.textContent = isSignedIn()
+      ? `Inloggad som ${state.activeAccountName}`
+      : "Ej inloggad";
+  }
+
+  if (elements.accountHint) {
+    elements.accountHint.textContent = isSignedIn()
+      ? "Dina bokmärken och statusknappar sparas nu bara under det här kontot."
+      : "Logga in med bara namn för att spara Bokmärken, Sökt, Intervju, Avböjt och Ej intressant.";
+  }
+
+  if (elements.signoutButton) {
+    elements.signoutButton.disabled = !isSignedIn();
+  }
+
+  if (!elements.accountPresets) {
+    return;
+  }
+
+  elements.accountPresets.innerHTML = "";
+
+  Object.entries(state.accounts)
+    .sort((left, right) => {
+      const leftTime = toDate(left[1]?.lastUsedAt)?.getTime() ?? 0;
+      const rightTime = toDate(right[1]?.lastUsedAt)?.getTime() ?? 0;
+      return rightTime - leftTime;
+    })
+    .slice(0, 6)
+    .forEach(([accountId, account]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `account-preset ${state.activeAccountId === accountId ? "is-active" : ""}`;
+      button.textContent = account.name || accountId;
+      button.addEventListener("click", () => {
+        setActiveAccount(account.name || accountId);
+        persistState();
+        render();
+      });
+      elements.accountPresets.append(button);
+    });
+}
+
 function renderSummary() {
   const groupedJobs = getGroupedJobs();
   const statusCounts = getStatusCounts();
@@ -754,6 +988,7 @@ function renderSummary() {
     ["Sökt", statusCounts.applied],
     ["Intervju", statusCounts.interview],
     ["Avböjt", statusCounts.rejected],
+    ["Ej intressant", statusCounts.not_interested],
   ];
 
   elements.summaryGrid.innerHTML = "";
@@ -770,13 +1005,65 @@ function renderSummary() {
   elements.heroNextRefresh.textContent = formatTimestamp(state.nextScheduledRefreshAt);
 }
 
+function createContactCard(contact) {
+  const wrapper = document.createElement("article");
+  wrapper.className = "job-contact-card";
+
+  const name = document.createElement("strong");
+  name.textContent = contact.name || "Kontakt hittad";
+
+  const role = document.createElement("span");
+  role.className = "job-contact-role";
+  role.textContent = contact.role || "Kontakt";
+
+  const meta = document.createElement("div");
+  meta.className = "job-contact-meta";
+
+  if (contact.title && contact.title !== contact.role) {
+    const title = document.createElement("span");
+    title.textContent = contact.title;
+    meta.append(title);
+  }
+
+  if (contact.email) {
+    const email = document.createElement("a");
+    email.href = `mailto:${contact.email}`;
+    email.textContent = contact.email;
+    meta.append(email);
+  }
+
+  if (contact.phone) {
+    const phone = document.createElement("a");
+    phone.href = `tel:${contact.phone.replace(/\s+/g, "")}`;
+    phone.textContent = contact.phone;
+    meta.append(phone);
+  }
+
+  if (contact.sourceName) {
+    const source = document.createElement("span");
+    source.textContent = `Källa: ${contact.sourceName}`;
+    meta.append(source);
+  }
+
+  wrapper.append(role, name, meta);
+  return wrapper;
+}
+
 function createStatusButton(job, statusId, label) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = `status-chip ${getPipelineStatus(job.id) === statusId ? "is-status-active" : ""}`;
   button.dataset.status = statusId;
   button.textContent = label;
+  button.disabled = !isSignedIn();
+  button.title = isSignedIn()
+    ? `${label} sparas i kontot ${state.activeAccountName}`
+    : "Logga in med ett kontonamn for att spara status.";
   button.addEventListener("click", () => {
+    if (!isSignedIn()) {
+      return;
+    }
+
     state.statuses[job.id] = statusId;
     if (statusId === "active") {
       delete state.statuses[job.id];
@@ -797,21 +1084,28 @@ function createJobCard(job) {
   const location = fragment.querySelector(".job-location");
   const source = fragment.querySelector(".job-source");
   const published = fragment.querySelector(".job-published");
+  const seekingRole = fragment.querySelector(".job-seeking-role");
   const link = fragment.querySelector(".job-link");
   const linkCount = fragment.querySelector(".job-link-count");
   const linksList = fragment.querySelector(".job-links-list");
+  const roleSummary = fragment.querySelector(".job-role-summary");
+  const contactCount = fragment.querySelector(".job-contact-count");
+  const contactsList = fragment.querySelector(".job-contacts-list");
   const notes = fragment.querySelector(".job-notes");
   const actions = fragment.querySelector(".job-actions");
 
   category.textContent = job.category;
   title.innerHTML = `<a class="job-title-link" href="${job.link}" target="_blank" rel="noreferrer">${job.title}</a>`;
+  roleSummary.textContent = job.roleSummary;
   location.textContent = job.location;
   source.textContent =
     job.sourceEntries.length === 1 ? job.sourceEntries[0].sourceName : `${job.sourceEntries.length} källor`;
   published.textContent = job.oldestPublicationLabel;
+  seekingRole.textContent = job.roleLabel;
   link.href = job.link;
   link.textContent = "Öppna första träffen";
   linkCount.textContent = `${job.sourceEntries.length} länk${job.sourceEntries.length === 1 ? "" : "ar"}`;
+  contactCount.textContent = `${job.contacts.length} kontakt${job.contacts.length === 1 ? "" : "er"}`;
 
   job.sourceEntries.forEach((entry, index) => {
     const sourceLink = document.createElement("a");
@@ -831,9 +1125,14 @@ function createJobCard(job) {
   });
 
   const isBookmarked = state.bookmarks.has(job.id);
-  bookmarkButton.textContent = isBookmarked ? "Sparad" : "Spara";
+  bookmarkButton.textContent = !isSignedIn() ? "Logga in för att spara" : isBookmarked ? "Sparad" : "Spara";
   bookmarkButton.classList.toggle("is-bookmarked", isBookmarked);
+  bookmarkButton.disabled = !isSignedIn();
   bookmarkButton.addEventListener("click", () => {
+    if (!isSignedIn()) {
+      return;
+    }
+
     if (state.bookmarks.has(job.id)) {
       state.bookmarks.delete(job.id);
     } else {
@@ -843,6 +1142,16 @@ function createJobCard(job) {
     persistState();
     render();
   });
+
+  if (job.contacts.length) {
+    job.contacts.forEach((contact) => contactsList.append(createContactCard(contact)));
+  } else {
+    const empty = document.createElement("p");
+    empty.className = "job-contact-empty";
+    empty.textContent =
+      "Ingen chef eller kontaktperson kunde utläsas från annonsen eller närliggande kontaktsidor ännu.";
+    contactsList.append(empty);
+  }
 
   if (job.isDuplicate) {
     const note = document.createElement("span");
@@ -869,7 +1178,8 @@ function createJobCard(job) {
     createStatusButton(job, "active", "Aktiv"),
     createStatusButton(job, "applied", "Sökt"),
     createStatusButton(job, "interview", "Intervju"),
-    createStatusButton(job, "rejected", "Avböjt")
+    createStatusButton(job, "rejected", "Avböjt"),
+    createStatusButton(job, "not_interested", "Ej intressant")
   );
 
   return fragment;
@@ -881,7 +1191,7 @@ function updateBoardHeading(filteredJobs) {
   const currentSort = sortOptions.find((option) => option.id === state.activeSort);
 
   elements.boardTitle.textContent = `${currentPipeline.label} · ${currentTemplate.label}`;
-  elements.boardSubTitle.textContent = `${filteredJobs.length} sammanslagna annonser efter filter. Sortering: ${currentSort.label.toLowerCase()}. Datumet i varje länkrad visar när respektive källa publicerade annonsen.`;
+  elements.boardSubTitle.textContent = `${filteredJobs.length} sammanslagna annonser efter filter. Sortering: ${currentSort.label.toLowerCase()}. Rollen bedöms från annonsens titel och brödtext, och varje kort visar även chef- eller kontaktuppgifter när de har kunnat hittas.`;
 }
 
 function renderBoards() {
@@ -974,7 +1284,107 @@ async function readLivePayload({ manual = false } = {}) {
   return response.json();
 }
 
+function splitIntoSentences(value = "") {
+  return String(value)
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function extractFirstMeaningfulLine(value = "") {
+  return String(value)
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 12) || "Annonsen";
+}
+
+function inferGeneratorRole(adText = "") {
+  const normalized = normalizeLookup(adText);
+
+  if (/specialist|overlakare|allmanspecialist|specialist i|specialist inom/.test(normalized)) {
+    return "specialistläkare";
+  }
+
+  if (/bt lakare|bastjanstgoring|bastjanstgoringslakare/.test(normalized)) {
+    return "BT-läkare";
+  }
+
+  if (/underlakare|lakarkandidat|at lakare/.test(normalized)) {
+    return "underläkare";
+  }
+
+  if (/legitimerad lakare|leg lakare|distriktslakare/.test(normalized)) {
+    return "legitimerad läkare";
+  }
+
+  return "läkare";
+}
+
+function inferOrganization(adText = "") {
+  const firstLine = extractFirstMeaningfulLine(adText);
+  const inlineMatch = firstLine.match(/(?:hos|på|till)\s+([A-ZÅÄÖa-zåäö0-9&.\- ]{3,70})/);
+  if (inlineMatch) {
+    return inlineMatch[1].trim();
+  }
+
+  const orgMatch = adText.match(
+    /\b(?:Capio|Meliva|Kry|Praktikertjänst|Region Stockholm|Södersjukhuset|Karolinska|SLSO|Danderyds Sjukhus|Internetmedicin)\b/i
+  );
+
+  return orgMatch ? orgMatch[0] : "er verksamhet";
+}
+
+function inferProfileHighlights(profileText = "") {
+  const lines = String(profileText)
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-*•]\s*/, "").trim())
+    .filter((line) => line.length > 8);
+
+  return lines.slice(0, 4);
+}
+
+function generateLetterFromInputs(adText, profileText) {
+  const trimmedAd = adText.trim();
+  const trimmedProfile = profileText.trim();
+
+  if (!trimmedAd || !trimmedProfile) {
+    return {
+      letter: "",
+      status: "Fyll i både annonsens brödtext och ditt CV eller LinkedIn-underlag först.",
+    };
+  }
+
+  const adTitle = extractFirstMeaningfulLine(trimmedAd);
+  const organization = inferOrganization(trimmedAd);
+  const role = inferGeneratorRole(trimmedAd);
+  const adSignals = splitIntoSentences(trimmedAd).slice(0, 3);
+  const profileHighlights = inferProfileHighlights(trimmedProfile);
+
+  const opening =
+    `Hej,\n\nJag vill gärna anmäla mitt intresse för tjänsten "${adTitle}" hos ${organization}. ` +
+    `Utifrån annonsen bedömer jag att ni söker en ${role} med god klinisk förmåga, samarbetsförmåga och ett tydligt patientfokus.`;
+
+  const adParagraph = adSignals.length
+    ? `\n\nDet som särskilt tilltalar mig i annonsen är ${adSignals.join(" ").trim()}`
+    : "";
+
+  const profileParagraph = profileHighlights.length
+    ? `\n\nI min profil vill jag särskilt lyfta fram ${profileHighlights
+        .map((line, index) => (index === 0 ? line.charAt(0).toLowerCase() + line.slice(1) : line))
+        .join(", ")}. Jag trivs i miljöer där ansvar, tempo och gott samarbete behöver kombineras med ett lugnt och professionellt bemötande.`
+    : "\n\nJag bidrar med en stabil medicinsk grund, hög arbetskapacitet och ett starkt engagemang för patientsäkerhet, bemötande och teamarbete.";
+
+  const closing =
+    "\n\nJag skulle uppskatta möjligheten att berätta mer om hur jag kan bidra till verksamheten och utvecklas vidare tillsammans med er. Tack för att ni tar er tid att läsa min ansökan.\n\nVänliga hälsningar";
+
+  return {
+    letter: `${opening}${adParagraph}${profileParagraph}${closing}`.trim(),
+    status: `Brevutkast skapat för ${role} hos ${organization}. Justera gärna tonen och detaljerna innan du skickar.`,
+  };
+}
+
 function render() {
+  renderAccountPanel();
   renderTemplates();
   renderPipelineTabs();
   renderCategoryFilters();
@@ -1042,6 +1452,71 @@ elements.sortSelect?.addEventListener("change", (event) => {
   state.activeSort = event.target.value;
   persistState();
   render();
+});
+
+elements.loginButton?.addEventListener("click", () => {
+  const candidate = elements.accountInput?.value ?? "";
+  const normalized = normalizeAccountId(candidate);
+  if (!normalized) {
+    if (elements.accountHint) {
+      elements.accountHint.textContent = "Skriv ett kontonamn med bokstäver eller siffror först.";
+    }
+    return;
+  }
+
+  setActiveAccount(candidate);
+  persistState();
+  render();
+});
+
+elements.accountInput?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    elements.loginButton?.click();
+  }
+});
+
+elements.signoutButton?.addEventListener("click", () => {
+  setActiveAccount("");
+  persistState();
+  render();
+});
+
+elements.generateLetterButton?.addEventListener("click", () => {
+  const result = generateLetterFromInputs(
+    elements.generatorAdInput?.value ?? "",
+    elements.generatorProfileInput?.value ?? ""
+  );
+
+  if (elements.generatorLetterOutput) {
+    elements.generatorLetterOutput.value = result.letter;
+  }
+
+  if (elements.generatorStatus) {
+    elements.generatorStatus.textContent = result.status;
+  }
+});
+
+elements.copyLetterButton?.addEventListener("click", async () => {
+  const letter = elements.generatorLetterOutput?.value ?? "";
+  if (!letter.trim()) {
+    if (elements.generatorStatus) {
+      elements.generatorStatus.textContent = "Skapa ett brevutkast först, sedan kan du kopiera det.";
+    }
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(letter);
+    if (elements.generatorStatus) {
+      elements.generatorStatus.textContent = "Personligt brev kopierat till urklipp.";
+    }
+  } catch {
+    if (elements.generatorStatus) {
+      elements.generatorStatus.textContent =
+        "Kunde inte kopiera automatiskt. Markera brevet manuellt och kopiera det.";
+    }
+  }
 });
 
 loadStoredState();

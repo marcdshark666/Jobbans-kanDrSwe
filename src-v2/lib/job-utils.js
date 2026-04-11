@@ -88,29 +88,86 @@ export function cleanUrl(rawUrl = "") {
 }
 
 export function classifyJob(title = "", context = "") {
-  const text = normalizeForCompare(`${title} ${context}`);
+  const combinedText = normalizeForCompare(`${title} ${context}`);
+  if (combinedText.includes("tandlakare") || combinedText.includes("odontolog")) {
+    return null;
+  }
 
-  if (
+  const titleText = normalizeForCompare(title);
+  const signalText = buildRoleSignalText(title, context);
+
+  if (matchesBtRole(titleText)) {
+    return "BT-läkare";
+  }
+
+  if (matchesSpecialistRole(titleText)) {
+    return "Specialist";
+  }
+
+  if (matchesUnderlakareRole(titleText)) {
+    return "Underläkare";
+  }
+
+  if (matchesLegitimeradRole(titleText)) {
+    return "Legitimerad läkare";
+  }
+
+  if (matchesBtRole(signalText)) {
+    return "BT-läkare";
+  }
+
+  if (matchesSpecialistRole(signalText)) {
+    return "Specialist";
+  }
+
+  if (matchesUnderlakareRole(signalText)) {
+    return "Underläkare";
+  }
+
+  if (matchesLegitimeradRole(signalText)) {
+    return "Legitimerad läkare";
+  }
+
+  return null;
+}
+
+function buildRoleSignalText(title = "", context = "") {
+  const compact = normalizeWhitespace(context);
+  const spotlight = splitSpotlightSentences(compact)
+    .filter((sentence) =>
+      /(vi söker|söker dig|kvalifikation|krav|du har|vi letar|legitimerad|specialist|underläkare|bt|läkarexamen)/i.test(
+        sentence
+      )
+    )
+    .slice(0, 4)
+    .join(" ");
+
+  return normalizeForCompare(`${title} ${spotlight}`);
+}
+
+function matchesBtRole(text = "") {
+  return (
     /\bbt\b/.test(text) ||
     text.includes("bt lakare") ||
     text.includes("bt tjanst") ||
     text.includes("bt block") ||
     text.includes("bastjanstgoring") ||
     text.includes("bastjanstgoringslakare")
-  ) {
-    return "BT-läkare";
-  }
+  );
+}
 
-  if (
+function matchesUnderlakareRole(text = "") {
+  return (
     text.includes("underlakare") ||
     text.includes("at lakare") ||
     text.includes("lakarkandidat") ||
-    text.includes("examinerad underlakare")
-  ) {
-    return "Underläkare";
-  }
+    text.includes("examinerad underlakare") ||
+    text.includes("lakarexamen")
+  );
+}
 
-  if (
+function matchesSpecialistRole(text = "") {
+  return (
     text.includes("specialistlakare") ||
     text.includes("specialist i") ||
     text.includes("specialist inom") ||
@@ -124,20 +181,16 @@ export function classifyJob(title = "", context = "") {
     text.includes("kirurg") ||
     text.includes("allmanmedicin") ||
     text.includes("specialist")
-  ) {
-    return "Specialist";
-  }
+  );
+}
 
-  if (
+function matchesLegitimeradRole(text = "") {
+  return (
     text.includes("leg lakare") ||
     text.includes("legitimerad lakare") ||
     text.includes("distriktslakare") ||
     /\blakare\b/.test(text)
-  ) {
-    return "Legitimerad läkare";
-  }
-
-  return null;
+  );
 }
 
 export function matchesStockholm(text = "") {
@@ -325,4 +378,235 @@ export function createHistoryEntry(job, currentTimestamp, previous, sourceNames 
     sources: Array.from(uniqueSources),
     timesSeenAcrossRefreshes: (base.timesSeenAcrossRefreshes ?? 0) + 1,
   };
+}
+
+const specialtyMatchers = [
+  { label: "allmänmedicin", terms: ["allmanmedicin", "vardcentral", "huslakare", "distriktslakare"] },
+  { label: "gynekologi", terms: ["gynekologi", "obstetrik", "gyn"] },
+  { label: "psykiatri", terms: ["psykiatri", "psykiater"] },
+  { label: "ortopedi", terms: ["ortopedi", "ortoped"] },
+  { label: "radiologi", terms: ["radiologi", "radiolog"] },
+  { label: "onkologi", terms: ["onkologi", "onkolog"] },
+  { label: "kirurgi", terms: ["kirurgi", "kirurg", "kolorektal"] },
+  { label: "anestesi och intensivvård", terms: ["anestesi", "intensivvard", "iva"] },
+  { label: "barn- och ungdomsmedicin", terms: ["barnmedicin", "barn och ungdomsmedicin", "pediatr"] },
+  { label: "akutsjukvård", terms: ["akutsjukvard", "akutmottagning"] },
+  { label: "geriatrik", terms: ["geriatrik", "geriatr"] },
+  { label: "internmedicin", terms: ["internmedicin"] },
+];
+
+function detectSpecialty(normalizedText = "") {
+  const hit = specialtyMatchers.find(({ terms }) =>
+    terms.some((term) => normalizedText.includes(term))
+  );
+
+  return hit?.label ?? "";
+}
+
+export function inferRoleLabel(title = "", context = "") {
+  const category = classifyJob(title, context);
+  const specialty = detectSpecialty(buildRoleSignalText(title, context));
+
+  if (category === "Specialist") {
+    return specialty ? `Specialistläkare inom ${specialty}` : "Specialistläkare";
+  }
+
+  if (category === "BT-läkare") {
+    return "BT-läkare";
+  }
+
+  if (category === "Underläkare") {
+    return "Underläkare";
+  }
+
+  if (category === "Legitimerad läkare") {
+    return "Legitimerad läkare";
+  }
+
+  return "Läkare";
+}
+
+export function buildRoleSummary(title = "", context = "") {
+  const normalized = normalizeForCompare(`${title} ${context}`);
+  const roleLabel = inferRoleLabel(title, context);
+  const specialty = detectSpecialty(normalized);
+  const compact = normalizeWhitespace(context);
+
+  if (/ansokan misslyckades|ladda om sidan|fornamn|efternamn|personligt brev/i.test(normalizeForCompare(compact))) {
+    return specialty && roleLabel.startsWith("Specialistläkare")
+      ? `Söker ${roleLabel.toLowerCase()} med tydligt fokus på ${specialty}.`
+      : `Söker ${roleLabel.toLowerCase()} med relevant klinisk erfarenhet och gott patientfokus.`;
+  }
+
+  const spotlight = splitSpotlightSentences(compact).find((sentence) =>
+    /specialist|legitimerad|underlakare|bt|lakarexamen|allmanmedicin|psykiatri|onkologi|gynekologi|kirurg|anestesi|barn|vi soker|soker en|soker dig|kvalifikation|krav/i.test(
+      normalizeForCompare(sentence)
+    ) &&
+    !/kontakt|telefon|mail|e post|facklig/i.test(normalizeForCompare(sentence))
+  );
+
+  if (spotlight) {
+    return spotlight;
+  }
+
+  if (specialty && roleLabel.startsWith("Specialistläkare")) {
+    return `Söker ${roleLabel.toLowerCase()} med tydligt fokus på ${specialty}.`;
+  }
+
+  if (roleLabel === "Underläkare") {
+    return "Söker underläkare eller läkare med tidig klinisk erfarenhet och stark utvecklingsvilja.";
+  }
+
+  if (roleLabel === "BT-läkare") {
+    return "Söker BT-läkare med god klinisk grund, samarbetsförmåga och vilja att utvecklas i verksamheten.";
+  }
+
+  if (roleLabel === "Legitimerad läkare") {
+    return specialty
+      ? `Söker legitimerad läkare med erfarenhet eller intresse för ${specialty}.`
+      : "Söker legitimerad läkare med gott patientfokus, struktur och samarbetsförmåga.";
+  }
+
+  return specialty
+    ? `Söker läkare med inriktning mot ${specialty} och ett tydligt patientfokus.`
+    : "Söker läkare med relevant kompetens, trygg klinisk bedömning och god samarbetsförmåga.";
+}
+
+function splitSpotlightSentences(text = "") {
+  return text
+    .split(/(?<=[.!?])\s+|\s+\|\s+|\n+/)
+    .map((sentence) => normalizeWhitespace(sentence))
+    .filter((sentence) => sentence.length >= 30 && sentence.length <= 260);
+}
+
+export function extractEmails(text = "") {
+  return Array.from(
+    new Set(
+      (normalizeWhitespace(text).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []).map((email) =>
+        email.toLowerCase()
+      )
+    )
+  );
+}
+
+function normalizePhoneCandidate(value = "") {
+  const candidate = normalizeWhitespace(value);
+  const digits = candidate.replace(/\D/g, "");
+  if (digits.length < 8 || digits.length > 12) {
+    return null;
+  }
+
+  return candidate;
+}
+
+export function extractPhones(text = "") {
+  const matches =
+    normalizeWhitespace(text).match(/(?<!\d)(?:\+46\s?(?:\(0\)\s?)?|0)[\d\s-]{7,18}\d(?!\d)/g) ?? [];
+
+  return Array.from(
+    new Set(
+      matches
+        .map((match) => normalizePhoneCandidate(match))
+        .filter(Boolean)
+    )
+  );
+}
+
+function extractNameFromSnippet(snippet = "", markerPattern = /Kontakt/i) {
+  const prepared = normalizeWhitespace(snippet).replace(/([a-zåäö])([A-ZÅÄÖ])/g, "$1 $2");
+  const tail = prepared
+    .replace(markerPattern, " ")
+    .split(/\b(?:Kontakt|Telefon|Tel|E-post|Email|Facklig|Ansök|Publicerad)\b/i)[0]
+    .replace(/^[:\s,-]+/, "")
+    .trim();
+
+  const normalizedTail = tail.replace(/^([a-zåäö])/, (match) => match.toUpperCase());
+  const nameMatch = normalizedTail.match(
+    /([A-ZÅÄÖ][A-Za-zÅÄÖåäö.\-]+(?:\s+[A-ZÅÄÖ][A-Za-zÅÄÖåäö.\-]+){0,3})/
+  );
+  return nameMatch ? normalizeWhitespace(nameMatch[1]) : "";
+}
+
+export function extractContactEntries(text = "", sourceName = "") {
+  const compact = normalizeWhitespace(text);
+  const allEmails = extractEmails(compact);
+  const allPhones = extractPhones(compact);
+  const entries = [];
+  const invalidNames = new Set([
+    "en",
+    "med",
+    "telefon",
+    "mail",
+    "kontakt",
+    "fackliga",
+    "ansok",
+    "genomga",
+  ]);
+
+  const patterns = [
+    { role: "Verksamhetschef", regex: /Verksamhetschef[^.]{0,180}/gi },
+    { role: "Sektionschef", regex: /Sektionschef[^.]{0,180}/gi },
+    { role: "Enhetschef", regex: /Enhetschef[^.]{0,180}/gi },
+    { role: "Medicinskt ansvarig", regex: /Medicinskt ansvarig(?: läkare)?[^.]{0,180}/gi },
+    { role: "Rekryterande chef", regex: /Rekryterande chef[^.]{0,180}/gi },
+    { role: "Kontaktperson", regex: /Kontaktperson[^.]{0,180}/gi },
+    { role: "Kontakt för frågor om tjänsten", regex: /Kontakt(?:\s+[A-ZÅÄÖ][^.]{0,160}| för frågor om tjänsten[^.]{0,160})/gi },
+  ];
+
+  patterns.forEach(({ role, regex }) => {
+    let match;
+    while ((match = regex.exec(compact))) {
+      const snippet = normalizeWhitespace(match[0]);
+      const emails = extractEmails(snippet);
+      const phones = extractPhones(snippet);
+      const entry = {
+        role,
+        title: role,
+        name: extractNameFromSnippet(snippet, new RegExp(role, "i")) || extractNameFromSnippet(snippet),
+        email: emails[0] ?? (allEmails.length === 1 ? allEmails[0] : ""),
+        phone: phones[0] ?? (allPhones.length === 1 ? allPhones[0] : ""),
+        sourceName,
+      };
+
+      if (invalidNames.has(normalizeForCompare(entry.name))) {
+        entry.name = "";
+      }
+
+      if (entry.name && !/\s/.test(entry.name) && !entry.email && !entry.phone) {
+        entry.name = "";
+      }
+
+      if (!entry.name && !entry.email && !entry.phone) {
+        continue;
+      }
+
+      entries.push(entry);
+    }
+  });
+
+  if (!entries.length && (allEmails.length || allPhones.length)) {
+    entries.push({
+      role: "Kontaktperson",
+      title: "Kontaktperson",
+      name: "",
+      email: allEmails[0] ?? "",
+      phone: allPhones[0] ?? "",
+      sourceName,
+    });
+  }
+
+  const deduped = new Map();
+  entries.forEach((entry) => {
+    const key = [
+      normalizeForCompare(entry.name),
+      normalizeForCompare(entry.email),
+      normalizeForCompare(entry.phone),
+    ].join("|");
+
+    if (!deduped.has(key)) {
+      deduped.set(key, entry);
+    }
+  });
+
+  return Array.from(deduped.values()).slice(0, 6);
 }

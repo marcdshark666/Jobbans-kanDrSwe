@@ -73,6 +73,39 @@
         <aside class="sidebar">
           <section class="panel">
             <div class="panel-head">
+              <h2>Konto</h2>
+              <p>Logga in med ett namn sa sparas bokmarken och knappstatus separat per profil.</p>
+            </div>
+            <div class="account-shell">
+              <label class="account-label" for="accountInput">Kontonamn</label>
+              <div class="account-actions">
+                <input
+                  id="accountInput"
+                  type="text"
+                  maxlength="40"
+                  placeholder="t.ex. marcdshark"
+                  autocomplete="off"
+                />
+                <button class="primary-button account-button" id="loginButton" type="button">
+                  Login
+                </button>
+                <button class="ghost-button account-button" id="signoutButton" type="button">
+                  Sign out
+                </button>
+              </div>
+              <div class="account-status-row">
+                <strong id="accountBadge">Ej inloggad</strong>
+                <p id="accountHint">
+                  Skriv bara ett namn. Varje profil far sin egen sparade vy i den har
+                  webblasaren.
+                </p>
+              </div>
+              <div class="account-presets" id="accountPresets"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
               <h2>Snabbmallar</h2>
               <p>Växla mellan Stockholm och hela Sverige.</p>
             </div>
@@ -150,6 +183,55 @@
             </div>
             <div class="category-boards" id="categoryBoards"></div>
           </section>
+
+          <section class="board panel-board generator-board">
+            <div class="board-head">
+              <div>
+                <p class="section-kicker">Generator</p>
+                <h2>Annons till personligt brev</h2>
+              </div>
+              <p>Klistra in annonsen och din profil sa skapas en snabb, professionell ansokan.</p>
+            </div>
+
+            <div class="generator-grid">
+              <div class="generator-step">
+                <label for="generatorAdInput">1. Annons eller brodtext</label>
+                <textarea
+                  id="generatorAdInput"
+                  rows="10"
+                  placeholder="Klistra in annonsrubrik och brodtext har..."
+                ></textarea>
+              </div>
+              <div class="generator-step">
+                <label for="generatorProfileInput">2. CV, LinkedIn eller kompetensprofil</label>
+                <textarea
+                  id="generatorProfileInput"
+                  rows="10"
+                  placeholder="Klistra in ditt CV, LinkedIn-lank eller en kort kompetenssammanfattning..."
+                ></textarea>
+              </div>
+              <div class="generator-step">
+                <label for="generatorLetterOutput">3. Personligt brev</label>
+                <textarea
+                  id="generatorLetterOutput"
+                  rows="14"
+                  placeholder="Har skapas ett personligt brev baserat pa annonsen och din profil..."
+                ></textarea>
+              </div>
+            </div>
+
+            <div class="generator-actions">
+              <button class="primary-button" id="generateLetterButton" type="button">
+                Generera brev
+              </button>
+              <button class="ghost-button" id="copyLetterButton" type="button">
+                Kopiera brev
+              </button>
+            </div>
+            <p class="generator-status" id="generatorStatus">
+              Flodet star redo. Klistra in en annons och din profil for att skapa ett utkast.
+            </p>
+          </section>
         </section>
       </main>
     </div>
@@ -162,6 +244,7 @@
         </div>
 
         <h3 class="job-title"></h3>
+        <p class="job-role-summary"></p>
 
         <div class="job-meta-grid">
           <div>
@@ -177,6 +260,10 @@
             <strong class="job-published"></strong>
           </div>
           <div>
+            <span class="meta-label">Soker</span>
+            <strong class="job-seeking-role"></strong>
+          </div>
+          <div>
             <span class="meta-label">Länk</span>
             <a class="job-link" target="_blank" rel="noreferrer">Öppna annons</a>
           </div>
@@ -188,6 +275,14 @@
             <strong class="job-link-count"></strong>
           </div>
           <div class="job-links-list"></div>
+        </section>
+
+        <section class="job-contacts-panel">
+          <div class="job-links-head">
+            <span>Chef och kontakt</span>
+            <strong class="job-contact-count"></strong>
+          </div>
+          <div class="job-contacts-list"></div>
         </section>
 
         <div class="job-notes"></div>

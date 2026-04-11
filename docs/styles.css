@@ -43,7 +43,8 @@ a {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -436,6 +437,84 @@ select {
   color: var(--ink);
 }
 
+.account-shell,
+.generator-step {
+  display: grid;
+  gap: 12px;
+}
+
+.account-label,
+.generator-step label {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.account-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+}
+
+.account-actions input,
+.generator-step textarea {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(5, 16, 22, 0.7);
+  color: var(--ink);
+}
+
+.account-actions input::placeholder,
+.generator-step textarea::placeholder {
+  color: rgba(236, 246, 245, 0.38);
+}
+
+.account-button {
+  white-space: nowrap;
+}
+
+.account-status-row {
+  display: grid;
+  gap: 8px;
+}
+
+.account-status-row strong {
+  display: inline-flex;
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+}
+
+.account-status-row p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+  font-size: 0.9rem;
+}
+
+.account-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-preset {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.account-preset.is-active {
+  border-color: rgba(30, 203, 225, 0.44);
+  background: linear-gradient(135deg, rgba(30, 203, 225, 0.14), rgba(30, 203, 225, 0.06));
+}
+
 .sort-box {
   min-width: 240px;
 }
@@ -463,6 +542,35 @@ select {
 
 .panel-board {
   padding: 24px;
+}
+
+.generator-board {
+  display: grid;
+  gap: 20px;
+}
+
+.generator-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.generator-step textarea {
+  min-height: 230px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.generator-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.generator-status {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .board-head {
@@ -552,6 +660,13 @@ select {
   line-height: 1.4;
 }
 
+.job-role-summary {
+  margin: -6px 0 0;
+  color: #d9efed;
+  line-height: 1.55;
+  font-size: 0.92rem;
+}
+
 .job-title-link {
   color: inherit;
   text-decoration: none;
@@ -599,6 +714,13 @@ select {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+.job-contacts-panel {
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 157, 87, 0.08);
+  border: 1px solid rgba(255, 157, 87, 0.14);
+}
+
 .job-links-head {
   display: flex;
   align-items: center;
@@ -620,6 +742,11 @@ select {
 }
 
 .job-links-list {
+  display: grid;
+  gap: 10px;
+}
+
+.job-contacts-list {
   display: grid;
   gap: 10px;
 }
@@ -677,6 +804,49 @@ select {
   font-weight: 600;
 }
 
+.job-contact-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.job-contact-card strong {
+  font-size: 0.92rem;
+}
+
+.job-contact-role {
+  color: var(--warm);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.job-contact-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.job-contact-meta a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.job-contact-meta a:hover {
+  text-decoration: underline;
+}
+
+.job-contact-empty {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
 .note-pill {
   display: inline-flex;
   align-items: center;
@@ -728,6 +898,12 @@ select {
   border-color: transparent;
 }
 
+.status-chip[data-status="not_interested"].is-status-active {
+  background: rgba(140, 167, 177, 0.28);
+  border-color: rgba(140, 167, 177, 0.38);
+  color: #f3fbfb;
+}
+
 .empty-state {
   padding: 28px;
   color: var(--muted);
@@ -748,6 +924,10 @@ select {
   .hero,
   .control-bar,
   .job-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .generator-grid {
     grid-template-columns: 1fr;
   }
 
@@ -780,7 +960,8 @@ select {
   }
 
   .toolbar-actions,
-  .job-source-link-row {
+  .job-source-link-row,
+  .account-actions {
     grid-template-columns: 1fr;
   }
 
