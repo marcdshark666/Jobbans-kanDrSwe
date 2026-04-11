@@ -669,11 +669,14 @@ function buildMergedJob(groupKey, groupJobs) {
   const contacts = combineContacts(groupJobs);
   const roleSummary = pickRoleSummary(groupJobs, sourceEntries);
   const roleLabel = pickRoleLabel(groupJobs, sourceEntries, category);
-  const employer =
+  const employerCandidate =
     sourceEntries.find((entry) => entry.employer)?.employer ??
     groupJobs.find((job) => job.employer)?.employer ??
-    sourceNames[0] ??
-    "Ej angivet";
+    "";
+  const employer =
+    employerCandidate && normalizeLookup(employerCandidate) !== normalizeLookup(location)
+      ? employerCandidate
+      : "";
   const startInfo =
     sourceEntries.find((entry) => entry.startInfo)?.startInfo ??
     groupJobs.find((job) => job.startInfo)?.startInfo ??

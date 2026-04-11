@@ -344,20 +344,45 @@ export function extractEmployer(text = "", fallback = "") {
     /(?:Organisation|Organization|Arbetsgivare|Employer|Klinik|Verksamhet)\s*[:|]?\s*([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&,\-./ ]{2,90})/
   );
   if (labeledMatch) {
-    return normalizeWhitespace(labeledMatch[1]);
+    const candidate = sanitizeEmployerValue(labeledMatch[1]);
+    if (isPlausibleEmployer(candidate)) {
+      return candidate;
+    }
   }
 
   const byTextMatch = compact.match(
     /(?:hos|på|till)\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&,\-./ ]{2,80}?)(?:\s+(?:i|med|som|Stockholm|Uppsala|Sverige)\b|$)/
   );
   if (byTextMatch) {
-    const candidate = normalizeWhitespace(byTextMatch[1]);
+    const candidate = sanitizeEmployerValue(byTextMatch[1]);
     if (isPlausibleEmployer(candidate)) {
       return candidate;
     }
   }
 
-  return fallback || "";
+  const fallbackCandidate = sanitizeEmployerValue(fallback);
+  return isPlausibleEmployer(fallbackCandidate) ? fallbackCandidate : "";
+}
+
+export function extractEmployerSafe(text = "", fallback = "") {
+  const direct = sanitizeEmployerValue(extractEmployer(text, fallback));
+  if (isPlausibleEmployer(direct)) {
+    return direct;
+  }
+
+  const compact = normalizeWhitespace(text);
+  const candidateMatch = compact.match(
+    /(?:hos|på|till)\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&,\-./ ]{2,80}?)(?:\s+(?:i|med|som|för)\b|$)/i
+  );
+
+  if (candidateMatch) {
+    const candidate = sanitizeEmployerValue(candidateMatch[1]);
+    if (isPlausibleEmployer(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "";
 }
 
 export function extractStartInfo(text = "") {
@@ -367,7 +392,7 @@ export function extractStartInfo(text = "") {
   );
 
   if (match) {
-    const candidate = normalizeWhitespace(match[1]);
+    const candidate = sanitizeStartInfo(match[1]);
     if (
       !/annonsera jobb|rekryteringssystem|vanliga fragor|jobbsokare|karriartips|integritet|familj/i.test(
         normalizeForCompare(candidate)
@@ -378,6 +403,23 @@ export function extractStartInfo(text = "") {
   }
 
   return "";
+}
+
+export function extractStartInfoSafe(text = "") {
+  const compact = normalizeWhitespace(text);
+  const safeMatch = compact.match(
+    /(?:Tillträde)\s*[:|]?\s*([^|.]{3,120})|(?:Startdatum|Start)\s*[:]\s*([^|.]{3,120})/i
+  );
+
+  if (safeMatch) {
+    const candidate = sanitizeStartInfo(safeMatch[1] || safeMatch[2] || "");
+    if (isPlausibleStartInfo(candidate)) {
+      return candidate;
+    }
+  }
+
+  const fallback = sanitizeStartInfo(extractStartInfo(text));
+  return isPlausibleStartInfo(fallback) ? fallback : "";
 }
 
 export function hasExpiredDeadlineNotice(text = "") {
@@ -730,12 +772,58 @@ export function extractContactEntries(text = "", sourceName = "") {
 }
 
 function isPlausibleEmployer(value = "") {
+  const trimmed = normalizeWhitespace(value);
+  const normalized = normalizeForCompare(value);
+  const singleWord = normalized.split(" ").filter(Boolean);
+  const strongEmployerWords = /capio|meliva|kry|karolinska|sodersjukhuset|akademiska|praktikertjanst|familjelakarna/i;
+  return (
+    Boolean(normalized) &&
+    /^[A-ZÅÄÖ]/.test(trimmed) &&
+    !/annonsera jobb|rekryteringssystem|vanliga fragor|jobbsokare|karriartips|integritet|cookie|hitta dromjobbet|logga in|sign in|linkedin|varbi/i.test(
+      normalized
+    ) &&
+    !/st inom|st till|leg lakare|underlakare|specialistlakare|nu soker vi|vi erbjuder|en dynamisk miljo dar du|att vaxa/i.test(
+      normalized
+    ) &&
+    normalized.split(" ").length <= 10 &&
+    normalized.length <= 80 &&
+    (!looksLikeStandaloneLocation(normalized) || strongEmployerWords.test(normalized)) &&
+    !(singleWord.length === 1 && singleWord[0].length < 4)
+  );
+}
+
+function sanitizeEmployerValue(value = "") {
+  return normalizeWhitespace(value)
+    .split(
+      /\b(?:Sök jobbet|Ansök|Publicerad|Sista ansökningsdag|Tillträde|Startdatum|Löneform|Sysselsättningsgrad|Ort|Län|Vill du|Vi söker|Intresseanmälan|bedrivs|Nu söker vi)\b/i
+    )[0]
+    .replace(/\s{2,}/g, " ")
+    .replace(/[.,;:]+$/g, "")
+    .trim();
+}
+
+function sanitizeStartInfo(value = "") {
+  return normalizeWhitespace(value)
+    .replace(/^(?:sdatum|datum)\s*:\s*/i, "")
+    .split(/\b(?:Löneform|Antal lediga befattningar|Sysselsättningsgrad|Ort|Län|Land|Kontakt|Ansök|Publicerad|Sista ansökningsdag)\b/i)[0]
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function isPlausibleStartInfo(value = "") {
   const normalized = normalizeForCompare(value);
   return (
     Boolean(normalized) &&
-    !/annonsera jobb|rekryteringssystem|vanliga fragor|jobbsokare|karriartips|integritet|cookie|hitta dromjobbet|logga in|sign in/i.test(
+    normalized.length >= 3 &&
+    normalized.length <= 90 &&
+    !/sidan|meny|halso och sjukvard|kultur|kollektivtrafik|regional utveckling|demokrati|politik|forskning|integritet|cookie|jobbsokare/i.test(
       normalized
-    ) &&
-    normalized.split(" ").length <= 12
+    )
+  );
+}
+
+function looksLikeStandaloneLocation(value = "") {
+  return /^(stockholm|solna|uppsala|enkoping|knivsta|tierp|osthammar|goteborg|malmo|ystad|norrkoping|visby|bollnas|landskrona|strangnas|huddinge|danderyd)$/i.test(
+    value
   );
 }
