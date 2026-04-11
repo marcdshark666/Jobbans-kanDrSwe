@@ -148,22 +148,30 @@ export function matchesStockholm(text = "") {
 export function extractDate(text = "") {
   const compact = normalizeWhitespace(text);
 
+  const isoDateTimeMatch = compact.match(/\b20\d{2}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?\b/);
+  if (isoDateTimeMatch) {
+    return isoDateTimeMatch[0].replace(" ", "T");
+  }
+
   const isoMatch = compact.match(/\b20\d{2}-\d{2}-\d{2}\b/);
   if (isoMatch) {
     return isoMatch[0];
   }
 
   const swedishDate = compact.match(
-    /\b(\d{1,2})\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)\s+(20\d{2})\b/i
+    /\b(\d{1,2})\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)\s+(20\d{2})(?:\s+kl\.?\s*(\d{1,2})[:.](\d{2}))?\b/i
   );
   if (swedishDate) {
-    const [, day, monthName, year] = swedishDate;
+    const [, day, monthName, year, hour, minute] = swedishDate;
     const month = swedishMonthMap[monthName.toLowerCase()];
-    return `${year}-${month}-${String(day).padStart(2, "0")}`;
+    const date = `${year}-${month}-${String(day).padStart(2, "0")}`;
+    return hour && minute
+      ? `${date}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`
+      : date;
   }
 
   const relative = compact.match(
-    /(publicerad for\s+[^|]+|\d+\s+(?:dag|dagar|vecka|veckor|manad|manader|ar)\s+sedan|be an early applicant|actively hiring)/i
+    /(publicerad for\s+[^|]+|\d+\s+(?:minut|minuter|timme|timmar|dag|dagar|vecka|veckor|manad|manader|ar|month|months|hour|hours|day|days)\s+sedan|be an early applicant|actively hiring)/i
   );
   if (relative) {
     return normalizeWhitespace(relative[0]);

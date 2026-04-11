@@ -126,6 +126,14 @@
             </div>
 
             <div class="toolbar-actions">
+              <div class="sort-box">
+                <label for="sortSelect">Sortering</label>
+                <select id="sortSelect" class="sort-select">
+                  <option value="earliest">Tidigast publicerad först</option>
+                  <option value="latest">Senast publicerad först</option>
+                  <option value="title">Titel A-Ö</option>
+                </select>
+              </div>
               <button class="ghost-button" id="clearFiltersButton" type="button">
                 Rensa filter
               </button>
@@ -173,6 +181,14 @@
             <a class="job-link" target="_blank" rel="noreferrer">Öppna annons</a>
           </div>
         </div>
+
+        <section class="job-links-panel">
+          <div class="job-links-head">
+            <span>Annonslänkar</span>
+            <strong class="job-link-count"></strong>
+          </div>
+          <div class="job-links-list"></div>
+        </section>
 
         <div class="job-notes"></div>
         <div class="job-actions"></div>

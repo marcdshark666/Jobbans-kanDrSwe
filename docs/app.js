@@ -1,4 +1,4 @@
-const repoUrl = "https://github.com/marcdshark666/Jobbans-kanDrSwe";
+﻿const repoUrl = "https://github.com/marcdshark666/Jobbans-kanDrSwe";
 const actionsUrl = `${repoUrl}/actions`;
 const dataUrl = "./data/jobs-cache.json";
 
@@ -37,7 +37,14 @@ const ageFilters = [
   { id: "2months", label: "Senaste 2 månaderna" },
 ];
 
-const storageKey = "doctor-jobs-radar-v2";
+const sortOptions = [
+  { id: "earliest", label: "Tidigast publicerad först" },
+  { id: "latest", label: "Senast publicerad först" },
+  { id: "title", label: "Titel A-Ö" },
+];
+
+const storageKey = "doctor-jobs-radar-v3";
+const unknownLocationLabels = new Set(["", "okänd ort", "okand ort", "unknown", "remote", "distans"]);
 
 const state = {
   jobs: [],
@@ -48,6 +55,7 @@ const state = {
   activeTemplate: "stockholm",
   activePipeline: "all",
   activeAgeFilter: "all",
+  activeSort: "earliest",
   searchQuery: "",
   activeCategories: new Set(categories),
   activeSources: new Set(),
@@ -69,11 +77,188 @@ const elements = {
   refreshStatus: document.querySelector("#refreshStatus"),
   clearFiltersButton: document.querySelector("#clearFiltersButton"),
   searchInput: document.querySelector("#searchInput"),
+  sortSelect: document.querySelector("#sortSelect"),
   heroLiveCount: document.querySelector("#heroLiveCount"),
   heroSourceCount: document.querySelector("#heroSourceCount"),
   heroNextRefresh: document.querySelector("#heroNextRefresh"),
   jobCardTemplate: document.querySelector("#jobCardTemplate"),
 };
+
+function normalizeLookup(value = "") {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isUnknownLocation(location = "") {
+  return unknownLocationLabels.has(normalizeLookup(location));
+}
+
+function toDate(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatTimestamp(value) {
+  const date = toDate(value);
+  if (!date) {
+    return value || "Ingen uppdatering ännu";
+  }
+
+  return new Intl.DateTimeFormat("sv-SE", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatDateOnly(value) {
+  const date = toDate(value);
+  if (!date) {
+    return value || "Ej angivet";
+  }
+
+  return new Intl.DateTimeFormat("sv-SE", {
+    dateStyle: "medium",
+  }).format(date);
+}
+
+function isRelativePublicationValue(value = "") {
+  return /(sedan|early applicant|actively hiring)/i.test(String(value));
+}
+
+function parsePublicationValue(value, fallbackTimestamp = null) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const isoDateTimeMatch = normalized.match(/\b20\d{2}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?\b/);
+  if (isoDateTimeMatch) {
+    return toDate(isoDateTimeMatch[0].replace(" ", "T"));
+  }
+
+  const isoDateMatch = normalized.match(/\b20\d{2}-\d{2}-\d{2}\b/);
+  if (isoDateMatch) {
+    return toDate(`${isoDateMatch[0]}T00:00:00`);
+  }
+
+  const directDate = toDate(normalized);
+  if (directDate) {
+    return directDate;
+  }
+
+  const relativeMatch = normalizeLookup(normalized).match(
+    /(\d+)\s+(minut|minuter|timme|timmar|hour|hours|dag|dagar|day|days|vecka|veckor|week|weeks|manad|manader|month|months|ar|year|years)\s+sedan/
+  );
+
+  if (relativeMatch) {
+    const amount = Number(relativeMatch[1]);
+    const unit = relativeMatch[2];
+    const base = toDate(fallbackTimestamp) ?? toDate(state.lastUpdated) ?? new Date();
+    const result = new Date(base);
+
+    if (/minut/.test(unit)) {
+      result.setMinutes(result.getMinutes() - amount);
+      return result;
+    }
+
+    if (/timme|hour/.test(unit)) {
+      result.setHours(result.getHours() - amount);
+      return result;
+    }
+
+    if (/dag|day/.test(unit)) {
+      result.setDate(result.getDate() - amount);
+      return result;
+    }
+
+    if (/vecka|week/.test(unit)) {
+      result.setDate(result.getDate() - amount * 7);
+      return result;
+    }
+
+    if (/manad|month/.test(unit)) {
+      result.setMonth(result.getMonth() - amount);
+      return result;
+    }
+
+    if (/ar|year/.test(unit)) {
+      result.setFullYear(result.getFullYear() - amount);
+      return result;
+    }
+  }
+
+  if (/be an early applicant|actively hiring/i.test(normalized)) {
+    return toDate(fallbackTimestamp) ?? toDate(state.lastUpdated);
+  }
+
+  return null;
+}
+
+function buildPublicationLabel(rawValue, publicationDate, fallbackDate, isVerified) {
+  if (rawValue && isVerified && !isRelativePublicationValue(rawValue)) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue.trim())) {
+      return formatDateOnly(publicationDate);
+    }
+
+    return formatTimestamp(publicationDate);
+  }
+
+  if (rawValue && publicationDate && isRelativePublicationValue(rawValue)) {
+    return `Ca ${formatTimestamp(publicationDate)} · ${rawValue}`;
+  }
+
+  if (rawValue && !isVerified) {
+    return `Datum på sidan: ${rawValue}`;
+  }
+
+  if (publicationDate) {
+    return formatTimestamp(publicationDate);
+  }
+
+  if (fallbackDate) {
+    return `Upptäckt ${formatTimestamp(fallbackDate)}`;
+  }
+
+  return "Ej angivet";
+}
+
+function getPublicationMeta(job) {
+  const detectedDate = toDate(job.detectedAt) ?? toDate(job.firstSeenAt) ?? toDate(state.lastUpdated);
+  const parsedPublication = parsePublicationValue(job.publishedAt, detectedDate);
+  const now = Date.now();
+  const isFutureLikePublication =
+    Boolean(parsedPublication) && parsedPublication.getTime() > now + 24 * 60 * 60 * 1000;
+  const verifiedPublicationDate = isFutureLikePublication ? null : parsedPublication;
+  const referenceDate = verifiedPublicationDate ?? detectedDate;
+
+  return {
+    rawPublishedAt: job.publishedAt ?? null,
+    publicationDate: verifiedPublicationDate,
+    referenceDate,
+    publicationLabel: buildPublicationLabel(
+      job.publishedAt ?? "",
+      verifiedPublicationDate,
+      detectedDate,
+      Boolean(verifiedPublicationDate)
+    ),
+  };
+}
 
 function loadStoredState() {
   try {
@@ -87,6 +272,7 @@ function loadStoredState() {
     state.activeTemplate = parsed.activeTemplate ?? state.activeTemplate;
     state.activePipeline = parsed.activePipeline ?? state.activePipeline;
     state.activeAgeFilter = parsed.activeAgeFilter ?? state.activeAgeFilter;
+    state.activeSort = parsed.activeSort ?? state.activeSort;
 
     const restoredCategories = (parsed.activeCategories ?? []).filter((item) =>
       categories.includes(item)
@@ -110,41 +296,141 @@ function persistState() {
       activeTemplate: state.activeTemplate,
       activePipeline: state.activePipeline,
       activeAgeFilter: state.activeAgeFilter,
+      activeSort: state.activeSort,
       activeCategories: Array.from(state.activeCategories),
       activeSources: Array.from(state.activeSources),
     })
   );
 }
 
-function formatTimestamp(value) {
-  if (!value) {
-    return "Ingen uppdatering ännu";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("sv-SE", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+function getMergedGroupKey(job, duplicateCounts) {
+  const duplicateCount = duplicateCounts.get(job.duplicateHintKey) ?? 0;
+  return duplicateCount > 1 ? `duplicate:${job.duplicateHintKey}` : `history:${job.historyKey || job.id}`;
 }
 
-function formatPublishedAt(value) {
-  if (!value) {
-    return "Ej angivet";
+function buildSourceEntries(groupJobs) {
+  const entries = groupJobs.map((job) => {
+    const publication = getPublicationMeta(job);
+
+    return {
+      sourceId: job.sourceId,
+      sourceName: job.sourceName,
+      title: job.title,
+      location: job.location,
+      link: job.link,
+      rawPublishedAt: publication.rawPublishedAt,
+      publicationDate: publication.publicationDate,
+      referenceDate: publication.referenceDate,
+      publicationLabel: publication.publicationLabel,
+      detectedAt: job.detectedAt,
+      firstSeenAt: job.firstSeenAt,
+    };
+  });
+
+  entries.sort((left, right) => {
+    if (left.referenceDate && right.referenceDate) {
+      const difference = left.referenceDate.getTime() - right.referenceDate.getTime();
+      if (difference !== 0) {
+        return difference;
+      }
+    }
+
+    if (left.referenceDate && !right.referenceDate) {
+      return -1;
+    }
+
+    if (!left.referenceDate && right.referenceDate) {
+      return 1;
+    }
+
+    return left.sourceName.localeCompare(right.sourceName, "sv");
+  });
+
+  return entries;
+}
+
+function pickBestLocation(groupJobs, sourceEntries) {
+  const candidateFromEntries = sourceEntries.find((entry) => !isUnknownLocation(entry.location));
+  if (candidateFromEntries) {
+    return candidateFromEntries.location;
   }
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
+  const candidateFromJobs = groupJobs.find((job) => !isUnknownLocation(job.location));
+  if (candidateFromJobs) {
+    return candidateFromJobs.location;
   }
 
-  return new Intl.DateTimeFormat("sv-SE", {
-    dateStyle: "medium",
-  }).format(date);
+  return sourceEntries[0]?.location ?? groupJobs[0]?.location ?? "Okänd ort";
+}
+
+function buildMergedJob(groupKey, groupJobs) {
+  const sourceEntries = buildSourceEntries(groupJobs);
+  const primaryEntry = sourceEntries[0] ?? null;
+  const sourceIds = Array.from(new Set(sourceEntries.map((entry) => entry.sourceId)));
+  const sourceNames = Array.from(new Set(sourceEntries.map((entry) => entry.sourceName)));
+  const oldestPublicationDate = sourceEntries.find((entry) => entry.referenceDate)?.referenceDate ?? null;
+  const latestPublicationDate = [...sourceEntries].reverse().find((entry) => entry.referenceDate)?.referenceDate ?? null;
+  const firstSeenAt =
+    groupJobs
+      .map((job) => toDate(job.firstSeenAt))
+      .filter(Boolean)
+      .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
+  const timesSeenAcrossRefreshes = Math.max(...groupJobs.map((job) => job.timesSeenAcrossRefreshes ?? 1), 1);
+  const location = pickBestLocation(groupJobs, sourceEntries);
+
+  return {
+    id: `group:${groupKey}`,
+    groupKey,
+    title: primaryEntry?.title ?? groupJobs[0]?.title ?? "Okänd annons",
+    category: groupJobs[0]?.category ?? "Legitimerad läkare",
+    location,
+    stockholmMatch: groupJobs.some((job) => job.stockholmMatch),
+    sourceEntries,
+    sourceIds,
+    sourceNames,
+    sourceName: sourceEntries.length === 1 ? primaryEntry?.sourceName ?? "Okänd källa" : `${sourceEntries.length} källor`,
+    link: primaryEntry?.link ?? "#",
+    oldestPublicationDate,
+    latestPublicationDate,
+    oldestPublicationLabel: primaryEntry?.publicationLabel ?? "Ej angivet",
+    isDuplicate: sourceEntries.length > 1,
+    duplicateCount: sourceEntries.length,
+    seenBefore: groupJobs.some((job) => job.seenBefore),
+    firstSeenAt,
+    firstSeenSource:
+      groupJobs.find((job) => job.firstSeenSource)?.firstSeenSource ?? sourceNames[0] ?? "Okänd källa",
+    timesSeenAcrossRefreshes,
+    searchText: [primaryEntry?.title ?? "", location, groupJobs[0]?.category ?? "", ...sourceNames]
+      .join(" ")
+      .toLowerCase(),
+  };
+}
+
+function getGroupedJobs() {
+  const duplicateCounts = new Map();
+
+  state.jobs.forEach((job) => {
+    if (!job.duplicateHintKey) {
+      return;
+    }
+
+    duplicateCounts.set(job.duplicateHintKey, (duplicateCounts.get(job.duplicateHintKey) ?? 0) + 1);
+  });
+
+  const groupedJobs = new Map();
+
+  state.jobs.forEach((job) => {
+    const groupKey = getMergedGroupKey(job, duplicateCounts);
+    if (!groupedJobs.has(groupKey)) {
+      groupedJobs.set(groupKey, []);
+    }
+
+    groupedJobs.get(groupKey).push(job);
+  });
+
+  return Array.from(groupedJobs.entries()).map(([groupKey, groupJobs]) =>
+    buildMergedJob(groupKey, groupJobs)
+  );
 }
 
 function getPipelineStatus(jobId) {
@@ -174,41 +460,17 @@ function matchesSearch(job) {
     return true;
   }
 
-  const haystack = [job.title, job.location, job.sourceName, job.category]
-    .join(" ")
-    .toLowerCase();
-
-  return haystack.includes(state.searchQuery.toLowerCase());
+  return job.searchText.includes(state.searchQuery.toLowerCase());
 }
 
 function matchesSourceFilter(job) {
-  return state.activeSources.size === 0 ? true : state.activeSources.has(job.sourceId);
+  return state.activeSources.size === 0
+    ? true
+    : job.sourceIds.some((sourceId) => state.activeSources.has(sourceId));
 }
 
 function getJobReferenceDate(job) {
-  const candidates = [job.publishedAt, job.detectedAt, job.firstSeenAt];
-  const now = Date.now();
-
-  for (const candidate of candidates) {
-    if (!candidate) {
-      continue;
-    }
-
-    const parsed = new Date(candidate);
-    if (Number.isNaN(parsed.getTime())) {
-      continue;
-    }
-
-    if (parsed.getTime() > now + 24 * 60 * 60 * 1000) {
-      continue;
-    }
-
-    if (parsed.getTime() <= now) {
-      return parsed;
-    }
-  }
-
-  return null;
+  return job.latestPublicationDate ?? job.oldestPublicationDate ?? null;
 }
 
 function matchesAgeFilter(job) {
@@ -243,16 +505,44 @@ function matchesAgeFilter(job) {
   return true;
 }
 
+function compareJobsForSort(left, right) {
+  if (state.activeSort === "title") {
+    return left.title.localeCompare(right.title, "sv");
+  }
+
+  if (state.activeSort === "latest") {
+    const leftDate = left.latestPublicationDate?.getTime() ?? Number.NEGATIVE_INFINITY;
+    const rightDate = right.latestPublicationDate?.getTime() ?? Number.NEGATIVE_INFINITY;
+    if (leftDate !== rightDate) {
+      return rightDate - leftDate;
+    }
+  } else {
+    const leftDate = left.oldestPublicationDate?.getTime() ?? Number.POSITIVE_INFINITY;
+    const rightDate = right.oldestPublicationDate?.getTime() ?? Number.POSITIVE_INFINITY;
+    if (leftDate !== rightDate) {
+      return leftDate - rightDate;
+    }
+  }
+
+  if (left.duplicateCount !== right.duplicateCount) {
+    return right.duplicateCount - left.duplicateCount;
+  }
+
+  return left.title.localeCompare(right.title, "sv");
+}
+
 function getFilteredJobs() {
-  return state.jobs.filter(
-    (job) =>
-      state.activeCategories.has(job.category) &&
-      matchesTemplate(job) &&
-      matchesPipeline(job) &&
-      matchesSearch(job) &&
-      matchesAgeFilter(job) &&
-      matchesSourceFilter(job)
-  );
+  return getGroupedJobs()
+    .filter(
+      (job) =>
+        state.activeCategories.has(job.category) &&
+        matchesTemplate(job) &&
+        matchesPipeline(job) &&
+        matchesSearch(job) &&
+        matchesAgeFilter(job) &&
+        matchesSourceFilter(job)
+    )
+    .sort(compareJobsForSort);
 }
 
 function getStatusCounts() {
@@ -264,7 +554,7 @@ function getStatusCounts() {
     rejected: 0,
   };
 
-  state.jobs.forEach((job) => {
+  getGroupedJobs().forEach((job) => {
     const status = getPipelineStatus(job.id);
 
     if (status === "active") {
@@ -292,7 +582,7 @@ function getStatusCounts() {
 }
 
 function getJobsForCounts() {
-  return state.jobs.filter(
+  return getGroupedJobs().filter(
     (job) =>
       matchesTemplate(job) &&
       matchesSearch(job) &&
@@ -302,7 +592,9 @@ function getJobsForCounts() {
 }
 
 function getJobsForSourceCounts() {
-  return state.jobs.filter((job) => matchesTemplate(job) && matchesSearch(job) && matchesAgeFilter(job));
+  return getGroupedJobs().filter(
+    (job) => matchesTemplate(job) && matchesSearch(job) && matchesAgeFilter(job)
+  );
 }
 
 function countByCategory() {
@@ -315,9 +607,13 @@ function countByCategory() {
 
 function countBySource() {
   const counts = {};
+
   getJobsForSourceCounts().forEach((job) => {
-    counts[job.sourceId] = (counts[job.sourceId] ?? 0) + 1;
+    job.sourceIds.forEach((sourceId) => {
+      counts[sourceId] = (counts[sourceId] ?? 0) + 1;
+    });
   });
+
   return counts;
 }
 
@@ -447,12 +743,13 @@ function renderSourceList() {
 }
 
 function renderSummary() {
+  const groupedJobs = getGroupedJobs();
   const statusCounts = getStatusCounts();
   const summaryItems = [
-    ["Live jobb", state.stats.totalJobs ?? state.jobs.length ?? 0],
-    ["Stockholm", state.stats.stockholmJobs ?? 0],
-    ["Hela Sverige", state.stats.sverigeJobs ?? 0],
-    ["Möjliga dubbletter", state.stats.duplicateJobs ?? 0],
+    ["Live annonser", groupedJobs.length],
+    ["Stockholm", groupedJobs.filter((job) => job.stockholmMatch).length],
+    ["Hela Sverige", groupedJobs.filter((job) => !job.stockholmMatch).length],
+    ["Sammanslagna dubletter", groupedJobs.filter((job) => job.isDuplicate).length],
     ["Bokmärken", statusCounts.bookmarks],
     ["Sökt", statusCounts.applied],
     ["Intervju", statusCounts.interview],
@@ -468,7 +765,7 @@ function renderSummary() {
     elements.summaryGrid.append(card);
   });
 
-  elements.heroLiveCount.textContent = `${state.stats.totalJobs ?? state.jobs.length ?? 0} jobb`;
+  elements.heroLiveCount.textContent = `${groupedJobs.length} annonser`;
   elements.heroSourceCount.textContent = `${state.stats.sourceCount ?? 0} källor`;
   elements.heroNextRefresh.textContent = formatTimestamp(state.nextScheduledRefreshAt);
 }
@@ -501,15 +798,37 @@ function createJobCard(job) {
   const source = fragment.querySelector(".job-source");
   const published = fragment.querySelector(".job-published");
   const link = fragment.querySelector(".job-link");
+  const linkCount = fragment.querySelector(".job-link-count");
+  const linksList = fragment.querySelector(".job-links-list");
   const notes = fragment.querySelector(".job-notes");
   const actions = fragment.querySelector(".job-actions");
 
   category.textContent = job.category;
-  title.textContent = job.title;
+  title.innerHTML = `<a class="job-title-link" href="${job.link}" target="_blank" rel="noreferrer">${job.title}</a>`;
   location.textContent = job.location;
-  source.textContent = job.sourceName;
-  published.textContent = formatPublishedAt(job.publishedAt);
+  source.textContent =
+    job.sourceEntries.length === 1 ? job.sourceEntries[0].sourceName : `${job.sourceEntries.length} källor`;
+  published.textContent = job.oldestPublicationLabel;
   link.href = job.link;
+  link.textContent = "Öppna första träffen";
+  linkCount.textContent = `${job.sourceEntries.length} länk${job.sourceEntries.length === 1 ? "" : "ar"}`;
+
+  job.sourceEntries.forEach((entry, index) => {
+    const sourceLink = document.createElement("a");
+    sourceLink.className = "job-source-link-row";
+    sourceLink.href = entry.link;
+    sourceLink.target = "_blank";
+    sourceLink.rel = "noreferrer";
+    sourceLink.innerHTML = `
+      <span class="job-source-link-index">${index + 1}</span>
+      <div class="job-source-link-copy">
+        <strong>${entry.sourceName}</strong>
+        <span>${entry.publicationLabel}</span>
+      </div>
+      <span class="job-source-link-open">Öppna</span>
+    `;
+    linksList.append(sourceLink);
+  });
 
   const isBookmarked = state.bookmarks.has(job.id);
   bookmarkButton.textContent = isBookmarked ? "Sparad" : "Spara";
@@ -525,10 +844,10 @@ function createJobCard(job) {
     render();
   });
 
-  if (job.isDuplicate && job.duplicateSources.length) {
+  if (job.isDuplicate) {
     const note = document.createElement("span");
     note.className = "note-pill note-duplicate";
-    note.textContent = `Möjlig dubblett även hos ${job.duplicateSources.join(", ")}`;
+    note.textContent = `${job.duplicateCount} länkar sammanslagna till samma annons`;
     notes.append(note);
   }
 
@@ -559,10 +878,10 @@ function createJobCard(job) {
 function updateBoardHeading(filteredJobs) {
   const currentTemplate = templates.find((template) => template.id === state.activeTemplate);
   const currentPipeline = pipelineViews.find((view) => view.id === state.activePipeline);
-  const currentAgeFilter = ageFilters.find((filter) => filter.id === state.activeAgeFilter);
+  const currentSort = sortOptions.find((option) => option.id === state.activeSort);
 
   elements.boardTitle.textContent = `${currentPipeline.label} · ${currentTemplate.label}`;
-  elements.boardSubTitle.textContent = `${filteredJobs.length} matchningar efter filter, status, datum och källor (${currentAgeFilter.label.toLowerCase()}).`;
+  elements.boardSubTitle.textContent = `${filteredJobs.length} sammanslagna annonser efter filter. Sortering: ${currentSort.label.toLowerCase()}. Datumet i varje länkrad visar när respektive källa publicerade annonsen.`;
 }
 
 function renderBoards() {
@@ -664,6 +983,10 @@ function render() {
   renderSummary();
   renderBoards();
   updateRefreshStatus();
+
+  if (elements.sortSelect) {
+    elements.sortSelect.value = state.activeSort;
+  }
 }
 
 async function loadJobs({ manual = false } = {}) {
@@ -701,6 +1024,7 @@ elements.refreshButton.addEventListener("click", () => {
 elements.clearFiltersButton.addEventListener("click", () => {
   state.activePipeline = "all";
   state.activeAgeFilter = "all";
+  state.activeSort = "earliest";
   state.activeCategories = new Set(categories);
   state.activeSources = new Set();
   state.searchQuery = "";
@@ -711,6 +1035,12 @@ elements.clearFiltersButton.addEventListener("click", () => {
 
 elements.searchInput.addEventListener("input", (event) => {
   state.searchQuery = event.target.value.trim();
+  render();
+});
+
+elements.sortSelect?.addEventListener("change", (event) => {
+  state.activeSort = event.target.value;
+  persistState();
   render();
 });
 
