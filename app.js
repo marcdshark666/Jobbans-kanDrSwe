@@ -50,6 +50,11 @@ const sortOptions = [
   { id: "title", label: "Titel A-Ö" },
 ];
 
+const vipProfiles = [
+  { id: "marcdshark", label: "marcdshark" },
+  { id: "adawozniak", label: "adawozniak" },
+];
+
 const storageKey = "doctor-jobs-radar-v6";
 const unknownLocationLabels = new Set(["", "okänd ort", "okand ort", "unknown", "remote", "distans"]);
 
@@ -315,6 +320,31 @@ function normalizeAccountId(value = "") {
     .slice(0, 40);
 }
 
+function looksLikeUsername(value = "") {
+  return /^[a-z0-9._-]{3,40}$/i.test(String(value).trim());
+}
+
+function resolveAccountMode(value = "") {
+  if (looksLikeEmail(value)) {
+    return "email";
+  }
+
+  if (looksLikeUsername(value)) {
+    return "username";
+  }
+
+  return null;
+}
+
+function getVipProfile(value = "") {
+  const normalized = normalizeAccountId(value);
+  return vipProfiles.find((profile) => profile.id === normalized) ?? null;
+}
+
+function isVipAccount(value = "") {
+  return Boolean(getVipProfile(value));
+}
+
 function createNotificationSettings() {
   return {
     enabled: false,
@@ -381,6 +411,12 @@ function ensureAccountProfile(accountId, accountName = "") {
     state.accounts[accountId] ?? createAccountProfile(accountName)
   );
   return state.accounts[accountId];
+}
+
+function ensureVipProfiles() {
+  vipProfiles.forEach((profile) => {
+    ensureAccountProfile(profile.id, profile.label);
+  });
 }
 
 function getActiveAccountProfile() {
@@ -451,6 +487,7 @@ function loadStoredState() {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey));
     if (!parsed) {
+      ensureVipProfiles();
       return;
     }
 
@@ -482,6 +519,8 @@ function loadStoredState() {
         parsed.activeAccountName ?? state.accounts[state.activeAccountId]?.name ?? "";
     }
 
+    ensureVipProfiles();
+
     const restoredCategories = (parsed.activeCategories ?? []).filter((item) =>
       categories.includes(item)
     );
@@ -497,6 +536,7 @@ function loadStoredState() {
     loadAccountState(state.activeAccountId);
   } catch (error) {
     console.warn("Kunde inte läsa sparat tillstånd", error);
+    ensureVipProfiles();
   }
 }
 
@@ -1166,16 +1206,25 @@ function renderAccountPanel() {
     elements.accountInput.value = state.activeAccountName;
   }
 
+  const activeVipProfile = getVipProfile(state.activeAccountId || state.activeAccountName);
+
   if (elements.accountBadge) {
     elements.accountBadge.textContent = isSignedIn()
-      ? `Inloggad som ${state.activeAccountName}`
+      ? activeVipProfile
+        ? `Inloggad som ${state.activeAccountName} · VIP-profil`
+        : `Inloggad som ${state.activeAccountName}`
       : "Ej inloggad";
+    elements.accountBadge.classList.toggle("is-vip", Boolean(activeVipProfile));
   }
 
   if (elements.accountHint) {
     elements.accountHint.textContent = isSignedIn()
-      ? "Dina bokmarken, knappstatusar och notifieringsval sparas nu under det har kontot."
-      : "Skapa konto eller logga in med e-post for att spara Bokmarken, Sokt, Intervju, Avbojt och Ej intressant.";
+      ? activeVipProfile
+        ? "VIP-profilen ar aktiv utan losenord. Bokmarken och knappstatusar sparas separat for just den har profilen."
+        : looksLikeEmail(state.activeAccountName)
+          ? "Dina bokmarken, knappstatusar och notifieringsval sparas nu under det har kontot."
+          : "Detta anvandarnamn fungerar utan losenord. Bokmarken och knappstatusar sparas separat i webblasaren."
+      : "Skapa konto eller logga in med e-post eller användarnamn for att spara Bokmarken, Sokt, Intervju, Avbojt och Ej intressant.";
   }
 
   if (elements.signoutButton) {
@@ -1233,9 +1282,11 @@ function renderAccountPanel() {
 
   if (elements.notificationHint) {
     if (!isSignedIn()) {
-      elements.notificationHint.textContent = "Logga in med e-post for att spara notifieringsval och forbereda mailutskick.";
+      elements.notificationHint.textContent = "Logga in med e-post for mailnotiser, eller använd användarnamn som marcdshark och adawozniak for lokala profiler utan losenord.";
     } else if (!looksLikeEmail(state.activeAccountName)) {
-      elements.notificationHint.textContent = "Byt till en e-postadress om du vill koppla kontot till mailnotiser.";
+      elements.notificationHint.textContent = activeVipProfile
+        ? "VIP-profil aktiv utan losenord. Byt bara till en e-postadress om du senare vill koppla mailnotiser."
+        : "Anvandarnamn fungerar utan losenord. Byt till en e-postadress om du vill koppla kontot till mailnotiser.";
     } else if (notificationSettings.statusMessage) {
       elements.notificationHint.textContent = notificationSettings.statusMessage;
     } else if (notificationSettings.enabled) {
@@ -1251,6 +1302,19 @@ function renderAccountPanel() {
 
   elements.accountPresets.innerHTML = "";
 
+  vipProfiles.forEach((profile) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `account-preset is-vip ${state.activeAccountId === profile.id ? "is-active" : ""}`;
+    button.textContent = `${profile.label} · VIP`;
+    button.addEventListener("click", () => {
+      setActiveAccount(profile.label);
+      persistState();
+      render();
+    });
+    elements.accountPresets.append(button);
+  });
+
   Object.entries(state.accounts)
     .sort((left, right) => {
       const leftTime = toDate(left[1]?.lastUsedAt)?.getTime() ?? 0;
@@ -1259,6 +1323,9 @@ function renderAccountPanel() {
     })
     .slice(0, 6)
     .forEach(([accountId, account]) => {
+      if (isVipAccount(accountId)) {
+        return;
+      }
       const button = document.createElement("button");
       button.type = "button";
       button.className = `account-preset ${state.activeAccountId === accountId ? "is-active" : ""}`;
@@ -1985,23 +2052,32 @@ elements.sortSelect?.addEventListener("change", (event) => {
 
 function submitAccountFromInput({ create = false } = {}) {
   const candidate = elements.accountInput?.value ?? "";
-  if (!looksLikeEmail(candidate)) {
+  const accountMode = resolveAccountMode(candidate);
+  if (!accountMode) {
     if (elements.accountHint) {
-      elements.accountHint.textContent = "Skriv en giltig e-postadress for att skapa eller logga in pa kontot.";
+      elements.accountHint.textContent =
+        "Skriv en giltig e-postadress eller ett användarnamn som marcdshark eller adawozniak.";
     }
     return false;
   }
 
   setActiveAccount(candidate);
+  const vipProfile = getVipProfile(candidate);
   const account = getActiveAccountProfile();
   if (create && account) {
-    account.name = candidate.trim().toLowerCase();
+    account.name = looksLikeEmail(candidate) ? candidate.trim().toLowerCase() : normalizeAccountId(candidate);
     account.notificationSettings.statusMessage =
-      "Kontot ar skapat. Du kan nu spara jobbstatus och aktivera e-postnotiser for just den har adressen.";
+      vipProfile
+        ? `${account.name} ar aktiverad som VIP-profil utan losenord.`
+        : accountMode === "email"
+          ? "Kontot ar skapat. Du kan nu spara jobbstatus och aktivera e-postnotiser for just den har adressen."
+          : "Kontot ar skapat. Detta användarnamn fungerar utan losenord och sparas lokalt i webblasaren.";
   }
   persistState();
   render();
-  syncNotificationSettings();
+  if (accountMode === "email") {
+    syncNotificationSettings();
+  }
   return true;
 }
 

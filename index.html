@@ -74,16 +74,16 @@
           <section class="panel">
             <div class="panel-head">
               <h2>Konto</h2>
-              <p>Skapa ett enkelt konto med e-post. Bokmarken, statusknappar och notifieringsval sparas separat per konto.</p>
+              <p>Logga in med e-post eller användarnamn. VIP-profilerna marcdshark och adawozniak fungerar utan lösenord.</p>
             </div>
             <div class="account-shell">
-              <label class="account-label" for="accountInput">E-postadress</label>
+              <label class="account-label" for="accountInput">E-post eller användarnamn</label>
               <div class="account-actions">
                 <input
                   id="accountInput"
-                  type="email"
+                  type="text"
                   maxlength="120"
-                  placeholder="t.ex. marcdshark@gmail.com"
+                  placeholder="t.ex. marcdshark, adawozniak eller namn@mail.se"
                   autocomplete="off"
                 />
                 <button class="ghost-button account-button" id="createAccountButton" type="button">
@@ -99,8 +99,8 @@
               <div class="account-status-row">
                 <strong id="accountBadge">Ej inloggad</strong>
                 <p id="accountHint">
-                  Fyll bara i e-postadress. Inget losenord behovs. Varje konto far sin egen
-                  sparade vy i den har webblasaren.
+                  Fyll bara i e-post eller användarnamn. Inget losenord behovs. Varje konto far sin egen
+                  sparade vy i den har webblasaren, och VIP-profilerna fungerar direkt.
                 </p>
               </div>
               <div class="account-presets" id="accountPresets"></div>
@@ -139,7 +139,7 @@
                 </div>
 
                 <p class="notification-hint" id="notificationHint">
-                  Logga in med e-post for att spara notifieringsval.
+                  Logga in med e-post for mailnotiser. Användarnamn fungerar fortfarande for lokala profiler utan lösenord.
                 </p>
               </section>
             </div>

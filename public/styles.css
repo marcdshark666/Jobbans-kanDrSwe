@@ -488,6 +488,12 @@ textarea {
   color: var(--ink);
 }
 
+.account-status-row strong.is-vip {
+  border: 1px solid rgba(255, 157, 87, 0.36);
+  background: linear-gradient(135deg, rgba(255, 157, 87, 0.2), rgba(30, 203, 225, 0.18));
+  color: #fff4e9;
+}
+
 .account-status-row p {
   margin: 0;
   color: var(--muted);
@@ -578,6 +584,12 @@ textarea {
   background: rgba(255, 255, 255, 0.03);
   color: var(--ink);
   cursor: pointer;
+}
+
+.account-preset.is-vip {
+  border-color: rgba(255, 157, 87, 0.34);
+  background: linear-gradient(135deg, rgba(255, 157, 87, 0.14), rgba(30, 203, 225, 0.08));
+  color: #ffe7d1;
 }
 
 .account-preset.is-active {
