@@ -94,8 +94,13 @@ const elements = {
   accountBadge: document.querySelector("#accountBadge"),
   accountHint: document.querySelector("#accountHint"),
   accountPresets: document.querySelector("#accountPresets"),
+  notificationEmailInput: document.querySelector("#notificationEmailInput"),
   notificationToggle: document.querySelector("#notificationToggle"),
-  notificationFrequencySelect: document.querySelector("#notificationFrequencySelect"),
+  notificationIntervalValue: document.querySelector("#notificationIntervalValue"),
+  notificationIntervalUnit: document.querySelector("#notificationIntervalUnit"),
+  notificationSaveButton: document.querySelector("#notificationSaveButton"),
+  notificationTestButton: document.querySelector("#notificationTestButton"),
+  notificationDisconnectButton: document.querySelector("#notificationDisconnectButton"),
   notificationTemplateFilters: document.querySelector("#notificationTemplateFilters"),
   notificationCategoryFilters: document.querySelector("#notificationCategoryFilters"),
   notificationHint: document.querySelector("#notificationHint"),
@@ -369,28 +374,75 @@ function mergeStatuses(primary = {}, fallback = {}) {
   return merged;
 }
 
+function normalizeNotificationIntervalValue(rawValue, unit = "hours") {
+  const parsed = Number(rawValue);
+  const fallback = unit === "days" ? 1 : 6;
+  const bounded = Number.isFinite(parsed) ? Math.round(parsed) : fallback;
+  const maximum = unit === "days" ? 90 : 720;
+  return Math.min(maximum, Math.max(1, bounded));
+}
+
+function deriveNotificationInterval(settings = {}, legacyAccount = {}) {
+  const explicitUnit = settings.intervalUnit === "days" ? "days" : settings.intervalUnit === "hours" ? "hours" : "";
+  const rawFrequencyHours = Number(settings.frequencyHours ?? legacyAccount.notificationFrequencyHours ?? 6);
+
+  let intervalUnit = explicitUnit;
+  let intervalValue = Number(settings.intervalValue);
+
+  if (!Number.isFinite(intervalValue) || intervalValue <= 0) {
+    if (!intervalUnit) {
+      intervalUnit = rawFrequencyHours >= 24 && rawFrequencyHours % 24 === 0 ? "days" : "hours";
+    }
+    intervalValue =
+      intervalUnit === "days"
+        ? Math.max(1, Math.round(rawFrequencyHours / 24))
+        : Math.max(1, Math.round(rawFrequencyHours || 6));
+  }
+
+  if (!intervalUnit) {
+    intervalUnit = rawFrequencyHours >= 24 && rawFrequencyHours % 24 === 0 ? "days" : "hours";
+  }
+
+  intervalValue = normalizeNotificationIntervalValue(intervalValue, intervalUnit);
+
+  return {
+    intervalUnit,
+    intervalValue,
+    frequencyHours: intervalUnit === "days" ? intervalValue * 24 : intervalValue,
+  };
+}
+
 function createNotificationSettings() {
+  const interval = deriveNotificationInterval({ intervalValue: 6, intervalUnit: "hours", frequencyHours: 6 });
   return {
     enabled: false,
-    frequencyHours: 6,
+    email: "",
+    intervalUnit: interval.intervalUnit,
+    intervalValue: interval.intervalValue,
+    frequencyHours: interval.frequencyHours,
     templates: [],
     categories: [],
     syncMode: "local",
     syncedAt: null,
+    confirmedAt: null,
+    lastTestedAt: null,
     statusMessage: "",
   };
 }
 
 function normalizeNotificationSettings(settings = {}, legacyAccount = {}) {
-  const frequencyCandidate = Number(
-    settings.frequencyHours ?? legacyAccount.notificationFrequencyHours ?? 6
-  );
+  const interval = deriveNotificationInterval(settings, legacyAccount);
   const templatesCandidate = Array.isArray(settings.templates)
     ? settings.templates
     : [];
   const categoriesCandidate = Array.isArray(settings.categories)
     ? settings.categories
     : [];
+  const emailCandidate = String(
+    settings.email ?? legacyAccount.notificationEmail ?? legacyAccount.email ?? ""
+  )
+    .trim()
+    .toLowerCase();
   const normalizedTemplates = templatesCandidate.filter((templateId) =>
     templates.some((template) => template.id === templateId)
   );
@@ -398,11 +450,16 @@ function normalizeNotificationSettings(settings = {}, legacyAccount = {}) {
 
   return {
     enabled: Boolean(settings.enabled ?? legacyAccount.notificationsEnabled ?? false),
-    frequencyHours: [6, 12, 24].includes(frequencyCandidate) ? frequencyCandidate : 6,
+    email: looksLikeEmail(emailCandidate) ? emailCandidate : "",
+    intervalUnit: interval.intervalUnit,
+    intervalValue: interval.intervalValue,
+    frequencyHours: interval.frequencyHours,
     templates: normalizedTemplates,
     categories: normalizedCategories,
     syncMode: settings.syncMode ?? "local",
     syncedAt: settings.syncedAt ?? null,
+    confirmedAt: settings.confirmedAt ?? null,
+    lastTestedAt: settings.lastTestedAt ?? null,
     statusMessage: settings.statusMessage ?? "",
   };
 }
@@ -491,6 +548,30 @@ function getActiveAccountProfile() {
 
 function getActiveNotificationSettings() {
   return getActiveAccountProfile()?.notificationSettings ?? createNotificationSettings();
+}
+
+function getNotificationEmail(settings = getActiveNotificationSettings()) {
+  const directEmail = String(settings?.email ?? "")
+    .trim()
+    .toLowerCase();
+  if (looksLikeEmail(directEmail)) {
+    return directEmail;
+  }
+
+  const accountEmail = String(state.activeAccountName ?? "")
+    .trim()
+    .toLowerCase();
+  return looksLikeEmail(accountEmail) ? accountEmail : "";
+}
+
+function describeNotificationInterval(settings = getActiveNotificationSettings()) {
+  const unit = settings.intervalUnit === "days" ? "days" : "hours";
+  const value = normalizeNotificationIntervalValue(settings.intervalValue, unit);
+  if (unit === "days") {
+    return `${value} ${value === 1 ? "dag" : "dagar"}`;
+  }
+
+  return `${value} ${value === 1 ? "timme" : "timmar"}`;
 }
 
 function saveActiveAccountState() {
@@ -1327,19 +1408,86 @@ function renderNotificationButtons(container, items, activeValues, className, on
     button.type = "button";
     button.className = `${className} ${activeValues.has(item.id) ? "is-active" : ""}`;
     button.textContent = item.label;
-    button.disabled = !isSignedIn() || !looksLikeEmail(state.activeAccountName);
+    button.ariaPressed = activeValues.has(item.id) ? "true" : "false";
+    button.disabled = !isSignedIn();
     button.addEventListener("click", () => onToggle(item.id));
     container.append(button);
   });
 }
 
-async function syncNotificationSettings() {
+async function hydrateNotificationSettingsFromServer() {
   const account = getActiveAccountProfile();
-  if (!account || !looksLikeEmail(state.activeAccountName)) {
+  if (!account) {
     return;
   }
 
-  const notificationSettings = getActiveNotificationSettings();
+  try {
+    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      return;
+    }
+
+    const query = new URLSearchParams({ profileId: state.activeAccountId });
+    const notificationEmail = getNotificationEmail(account.notificationSettings);
+    if (notificationEmail) {
+      query.set("email", notificationEmail);
+    }
+
+    const response = await fetch(`./api/subscriptions?${query.toString()}`, {
+      headers: {
+        accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`API-fel ${response.status}`);
+    }
+
+    const payload = await response.json();
+    if (!payload.subscription) {
+      return;
+    }
+
+    account.notificationSettings = normalizeNotificationSettings({
+      ...account.notificationSettings,
+      ...payload.subscription.notifications,
+      email: payload.subscription.email ?? notificationEmail,
+      confirmedAt: payload.subscription.confirmedAt ?? null,
+      lastTestedAt: payload.subscription.lastTestedAt ?? account.notificationSettings.lastTestedAt ?? null,
+      syncMode: "server",
+      syncedAt: payload.subscription.updatedAt ?? new Date().toISOString(),
+      statusMessage: `Prenumerationen ar kopplad till ${payload.subscription.email}.`,
+    });
+    persistState();
+    renderAccountPanel();
+  } catch {
+    // Lokal fallback: behåll webbläsarens värden.
+  }
+}
+
+async function syncNotificationSettings({ sendWelcome = true } = {}) {
+  const account = getActiveAccountProfile();
+  if (!account) {
+    return false;
+  }
+
+  const notificationSettings = normalizeNotificationSettings(account.notificationSettings, account);
+  const notificationEmail = getNotificationEmail(notificationSettings);
+  if (!looksLikeEmail(notificationEmail)) {
+    account.notificationSettings = normalizeNotificationSettings({
+      ...notificationSettings,
+      syncMode: "local",
+      syncedAt: null,
+      statusMessage: "Fyll i en giltig e-postadress innan du sparar prenumerationen.",
+    });
+    persistState();
+    renderAccountPanel();
+    return false;
+  }
+
+  account.notificationSettings = normalizeNotificationSettings({
+    ...notificationSettings,
+    email: notificationEmail,
+  });
 
   try {
     if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
@@ -1353,8 +1501,11 @@ async function syncNotificationSettings() {
         accept: "application/json",
       },
       body: JSON.stringify({
-        email: state.activeAccountName,
-        notifications: notificationSettings,
+        email: notificationEmail,
+        profileId: state.activeAccountId,
+        profileName: state.activeAccountName,
+        sendWelcome,
+        notifications: account.notificationSettings,
       }),
     });
 
@@ -1363,27 +1514,31 @@ async function syncNotificationSettings() {
     }
 
     const payload = await response.json();
-    account.notificationSettings = {
-      ...notificationSettings,
+    account.notificationSettings = normalizeNotificationSettings({
+      ...account.notificationSettings,
+      email: payload.subscription?.email ?? notificationEmail,
+      confirmedAt: payload.subscription?.confirmedAt ?? null,
       syncMode: "server",
       syncedAt: payload.subscription?.updatedAt ?? new Date().toISOString(),
       statusMessage:
         payload.message ??
-        `E-postnotiser ar synkade for ${state.activeAccountName}. Avslutslank skickas med i varje mail.`,
-    };
+        `E-postnotiser ar synkade for ${notificationEmail}. Avslutslank skickas med i varje mail.`,
+    });
   } catch {
-    account.notificationSettings = {
-      ...notificationSettings,
+    account.notificationSettings = normalizeNotificationSettings({
+      ...account.notificationSettings,
+      email: notificationEmail,
       syncMode: "local",
       syncedAt: null,
-      statusMessage: notificationSettings.enabled
+      statusMessage: account.notificationSettings.enabled
         ? "Installningen ar sparad pa kontot har i webblasaren. For riktiga utskick behovs server/API eftersom GitHub Pages ar statisk."
-        : "Notiser ar avstangda for kontot just nu.",
-    };
+        : "Prenumerationen ar sparad lokalt, men inga mail skickas just nu.",
+    });
   }
 
   persistState();
   renderAccountPanel();
+  return true;
 }
 
 function updateNotificationSetting(mutator) {
@@ -1393,14 +1548,238 @@ function updateNotificationSetting(mutator) {
   }
 
   mutator(account.notificationSettings);
+  account.notificationSettings = normalizeNotificationSettings(account.notificationSettings, account);
   persistState();
   renderAccountPanel();
-  if (looksLikeEmail(state.activeAccountName)) {
-    syncNotificationSettings();
+}
+
+async function sendNotificationTestEmail() {
+  const account = getActiveAccountProfile();
+  if (!account) {
+    return;
+  }
+
+  const notificationSettings = normalizeNotificationSettings(account.notificationSettings, account);
+  const notificationEmail = getNotificationEmail(notificationSettings);
+  if (!looksLikeEmail(notificationEmail)) {
+    account.notificationSettings = normalizeNotificationSettings({
+      ...notificationSettings,
+      statusMessage: "Fyll i en giltig e-postadress innan du skickar testmail.",
+    });
+    persistState();
+    renderAccountPanel();
+    return;
+  }
+
+  try {
+    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      throw new Error("GitHub Pages ar statisk");
+    }
+
+    const response = await fetch("./api/subscriptions/test", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        email: notificationEmail,
+        profileId: state.activeAccountId,
+        profileName: state.activeAccountName,
+        notifications: {
+          ...notificationSettings,
+          email: notificationEmail,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API-fel ${response.status}`);
+    }
+
+    const payload = await response.json();
+    account.notificationSettings = normalizeNotificationSettings({
+      ...notificationSettings,
+      email: notificationEmail,
+      lastTestedAt: payload.sentAt ?? new Date().toISOString(),
+      statusMessage: payload.message ?? `Testmail skickat till ${notificationEmail}.`,
+    });
+  } catch {
+    account.notificationSettings = normalizeNotificationSettings({
+      ...notificationSettings,
+      email: notificationEmail,
+      statusMessage:
+        "Testmail kraver lokal server eller annan backend med e-postkonfiguration. Pa GitHub Pages sparas valet bara lokalt.",
+    });
+  }
+
+  persistState();
+  renderAccountPanel();
+}
+
+async function disconnectNotificationEmail() {
+  const account = getActiveAccountProfile();
+  if (!account) {
+    return;
+  }
+
+  const notificationSettings = normalizeNotificationSettings(account.notificationSettings, account);
+  const notificationEmail = getNotificationEmail(notificationSettings);
+
+  try {
+    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      throw new Error("GitHub Pages ar statisk");
+    }
+
+    if (notificationEmail || state.activeAccountId) {
+      await fetch("./api/subscriptions", {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          email: notificationEmail,
+          profileId: state.activeAccountId,
+        }),
+      });
+    }
+  } catch {
+    // Lokalt rensar vi ändå panelen även om GitHub Pages inte kan prata med backend.
+  }
+
+  account.notificationSettings = normalizeNotificationSettings({
+    ...notificationSettings,
+    email: "",
+    enabled: false,
+    confirmedAt: null,
+    syncedAt: null,
+    statusMessage: "E-postadressen ar bortkopplad fran prenumerationen for den har profilen.",
+  });
+  persistState();
+  renderAccountPanel();
+}
+
+function ensureNotificationControls() {
+  const notificationShell = elements.notificationHint?.closest(".notification-shell");
+  const notificationGrid = notificationShell?.querySelector(".notification-grid");
+  if (!notificationShell || !notificationGrid) {
+    return;
+  }
+
+  const notificationLead = notificationShell.querySelector(".notification-head p");
+  if (notificationLead) {
+    notificationLead.textContent =
+      "Koppla en e-postadress till den inloggade profilen, aven om det ar ett VIP-profilnamn.";
+  }
+
+  const legacyFrequencyField = notificationGrid
+    .querySelector('label[for="notificationFrequencySelect"]')
+    ?.closest(".notification-field");
+  if (legacyFrequencyField) {
+    legacyFrequencyField.innerHTML = `
+      <label for="notificationIntervalValue">Paminna mig var</label>
+      <div class="notification-interval-row">
+        <input id="notificationIntervalValue" type="number" min="1" max="720" step="1" value="6" />
+        <select id="notificationIntervalUnit">
+          <option value="hours">Timmar</option>
+          <option value="days">Dagar</option>
+        </select>
+      </div>
+    `;
+  }
+
+  if (!notificationGrid.querySelector("#notificationEmailInput")) {
+    const emailField = document.createElement("div");
+    emailField.className = "notification-field notification-field-wide";
+    emailField.innerHTML = `
+      <label for="notificationEmailInput">Subscribe-mail</label>
+      <input
+        id="notificationEmailInput"
+        type="email"
+        placeholder="namn@mail.se"
+        autocomplete="email"
+      />
+    `;
+    notificationGrid.prepend(emailField);
+  }
+
+  if (!notificationGrid.querySelector("#notificationSaveButton")) {
+    const actionField = document.createElement("div");
+    actionField.className = "notification-field notification-field-actions";
+    actionField.innerHTML = `
+      <span class="account-label">Prenumeration</span>
+      <div class="notification-action-row">
+        <button class="primary-button" id="notificationSaveButton" type="button">Spara subscribe</button>
+        <button class="ghost-button" id="notificationTestButton" type="button">Trial button</button>
+        <button class="ghost-button" id="notificationDisconnectButton" type="button">Koppla bort mail</button>
+      </div>
+    `;
+    notificationGrid.insertBefore(actionField, notificationGrid.children[2] ?? null);
+  }
+
+  elements.notificationEmailInput ||= document.querySelector("#notificationEmailInput");
+  elements.notificationIntervalValue ||= document.querySelector("#notificationIntervalValue");
+  elements.notificationIntervalUnit ||= document.querySelector("#notificationIntervalUnit");
+  elements.notificationSaveButton ||= document.querySelector("#notificationSaveButton");
+  elements.notificationTestButton ||= document.querySelector("#notificationTestButton");
+  elements.notificationDisconnectButton ||= document.querySelector("#notificationDisconnectButton");
+
+  if (elements.notificationEmailInput && !elements.notificationEmailInput.dataset.bound) {
+    elements.notificationEmailInput.addEventListener("change", (event) => {
+      updateNotificationSetting((settings) => {
+        settings.email = event.target.value.trim().toLowerCase();
+      });
+    });
+    elements.notificationEmailInput.dataset.bound = "true";
+  }
+
+  if (elements.notificationIntervalValue && !elements.notificationIntervalValue.dataset.bound) {
+    elements.notificationIntervalValue.addEventListener("change", (event) => {
+      updateNotificationSetting((settings) => {
+        settings.intervalValue = normalizeNotificationIntervalValue(
+          event.target.value,
+          settings.intervalUnit === "days" ? "days" : "hours"
+        );
+      });
+    });
+    elements.notificationIntervalValue.dataset.bound = "true";
+  }
+
+  if (elements.notificationIntervalUnit && !elements.notificationIntervalUnit.dataset.bound) {
+    elements.notificationIntervalUnit.addEventListener("change", (event) => {
+      updateNotificationSetting((settings) => {
+        settings.intervalUnit = event.target.value === "days" ? "days" : "hours";
+      });
+    });
+    elements.notificationIntervalUnit.dataset.bound = "true";
+  }
+
+  if (elements.notificationSaveButton && !elements.notificationSaveButton.dataset.bound) {
+    elements.notificationSaveButton.addEventListener("click", () => {
+      syncNotificationSettings({ sendWelcome: true });
+    });
+    elements.notificationSaveButton.dataset.bound = "true";
+  }
+
+  if (elements.notificationTestButton && !elements.notificationTestButton.dataset.bound) {
+    elements.notificationTestButton.addEventListener("click", () => {
+      sendNotificationTestEmail();
+    });
+    elements.notificationTestButton.dataset.bound = "true";
+  }
+
+  if (elements.notificationDisconnectButton && !elements.notificationDisconnectButton.dataset.bound) {
+    elements.notificationDisconnectButton.addEventListener("click", () => {
+      disconnectNotificationEmail();
+    });
+    elements.notificationDisconnectButton.dataset.bound = "true";
   }
 }
 
 function applyPanelCopyTweaks() {
+  ensureNotificationControls();
+
   const accountShell = elements.accountInput?.closest(".account-shell");
   const accountPanelDescription = accountShell?.previousElementSibling?.querySelector("p");
   const accountLabel = document.querySelector('label[for="accountInput"]');
@@ -1456,17 +1835,41 @@ function renderAccountPanel() {
     elements.signoutButton.disabled = !isSignedIn();
   }
 
-  const notificationSettings = getActiveNotificationSettings();
-  const notificationsAvailable = isSignedIn() && looksLikeEmail(state.activeAccountName);
+  const notificationSettings = normalizeNotificationSettings(getActiveNotificationSettings());
+  const notificationEmail = getNotificationEmail(notificationSettings);
+  const notificationsAvailable = isSignedIn();
+
+  if (elements.notificationEmailInput) {
+    elements.notificationEmailInput.value = notificationEmail;
+    elements.notificationEmailInput.disabled = !notificationsAvailable;
+  }
 
   if (elements.notificationToggle) {
     elements.notificationToggle.checked = notificationSettings.enabled;
     elements.notificationToggle.disabled = !notificationsAvailable;
   }
 
-  if (elements.notificationFrequencySelect) {
-    elements.notificationFrequencySelect.value = String(notificationSettings.frequencyHours);
-    elements.notificationFrequencySelect.disabled = !notificationsAvailable || !notificationSettings.enabled;
+  if (elements.notificationIntervalValue) {
+    elements.notificationIntervalValue.value = String(notificationSettings.intervalValue);
+    elements.notificationIntervalValue.max = notificationSettings.intervalUnit === "days" ? "90" : "720";
+    elements.notificationIntervalValue.disabled = !notificationsAvailable || !notificationSettings.enabled;
+  }
+
+  if (elements.notificationIntervalUnit) {
+    elements.notificationIntervalUnit.value = notificationSettings.intervalUnit;
+    elements.notificationIntervalUnit.disabled = !notificationsAvailable || !notificationSettings.enabled;
+  }
+
+  if (elements.notificationSaveButton) {
+    elements.notificationSaveButton.disabled = !notificationsAvailable;
+  }
+
+  if (elements.notificationTestButton) {
+    elements.notificationTestButton.disabled = !notificationsAvailable || !looksLikeEmail(notificationEmail);
+  }
+
+  if (elements.notificationDisconnectButton) {
+    elements.notificationDisconnectButton.disabled = !notificationsAvailable || !looksLikeEmail(notificationEmail);
   }
 
   renderNotificationButtons(
@@ -1507,15 +1910,15 @@ function renderAccountPanel() {
 
   if (elements.notificationHint) {
     if (!isSignedIn()) {
-      elements.notificationHint.textContent = "Logga in med e-post for mailnotiser. Profilnamn utan e-post fungerar for lokal sparning i webblasaren.";
-    } else if (!looksLikeEmail(state.activeAccountName)) {
-      elements.notificationHint.textContent = "Profilen ar aktiv utan e-post. Byt till en e-postadress om du senare vill koppla mailnotiser.";
+      elements.notificationHint.textContent = "Logga in med e-post eller profilnamn for att spara prenumerationsval. Mailutskick kraver en kopplad e-postadress.";
+    } else if (!looksLikeEmail(notificationEmail)) {
+      elements.notificationHint.textContent = "Koppla en e-postadress till den har profilen och klicka sedan pa Spara subscribe for att aktivera riktiga mailnotiser.";
     } else if (notificationSettings.statusMessage) {
       elements.notificationHint.textContent = notificationSettings.statusMessage;
     } else if (notificationSettings.enabled) {
-      elements.notificationHint.textContent = `Mail ar aktiverade var ${notificationSettings.frequencyHours}:e timme for ${state.activeAccountName}.`;
+      elements.notificationHint.textContent = `Mail ar aktiverade var ${describeNotificationInterval(notificationSettings)} for ${notificationEmail}.`;
     } else {
-      elements.notificationHint.textContent = "Aktivera e-postnotiser for att fa mail nar nya matchande jobb publiceras.";
+      elements.notificationHint.textContent = "Välj filter, koppla mail och klicka pa Spara subscribe for att fa notiser om nya matchande jobb.";
     }
   }
 
@@ -2280,6 +2683,9 @@ function submitAccountFromInput({ create = false } = {}) {
     account.name = looksLikeEmail(candidate)
       ? candidate.trim().toLowerCase()
       : getVipProfile(candidate)?.label ?? normalizeAccountId(candidate);
+    if (looksLikeEmail(candidate) && !account.notificationSettings.email) {
+      account.notificationSettings.email = candidate.trim().toLowerCase();
+    }
     account.notificationSettings.statusMessage =
       accountMode === "email"
         ? "Kontot ar skapat. Du kan nu spara jobbstatus och aktivera e-postnotiser for just den har adressen."
@@ -2287,9 +2693,7 @@ function submitAccountFromInput({ create = false } = {}) {
   }
   persistState();
   render();
-  if (accountMode === "email") {
-    syncNotificationSettings();
-  }
+  hydrateNotificationSettingsFromServer();
   return true;
 }
 
@@ -2317,12 +2721,9 @@ elements.signoutButton?.addEventListener("click", () => {
 elements.notificationToggle?.addEventListener("change", (event) => {
   updateNotificationSetting((settings) => {
     settings.enabled = event.target.checked;
-  });
-});
-
-elements.notificationFrequencySelect?.addEventListener("change", (event) => {
-  updateNotificationSetting((settings) => {
-    settings.frequencyHours = Number(event.target.value);
+    if (event.target.checked && !getNotificationEmail(settings)) {
+      settings.statusMessage = "Lagg in en e-postadress och spara prenumerationen for att aktivera notiser.";
+    }
   });
 });
 

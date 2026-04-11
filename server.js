@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -47,6 +47,16 @@ function looksLikeEmail(email = "") {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
 }
 
+function normalizeProfileId(value = "") {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+}
+
 function toDate(value) {
   if (!value) {
     return null;
@@ -56,21 +66,55 @@ function toDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function normalizeIntervalSettings(settings = {}) {
+  const rawFrequencyHours = Number(settings.frequencyHours ?? 6);
+  const explicitUnit = settings.intervalUnit === "days" ? "days" : settings.intervalUnit === "hours" ? "hours" : "";
+
+  let intervalUnit = explicitUnit;
+  let intervalValue = Number(settings.intervalValue);
+
+  if (!Number.isFinite(intervalValue) || intervalValue <= 0) {
+    if (!intervalUnit) {
+      intervalUnit = rawFrequencyHours >= 24 && rawFrequencyHours % 24 === 0 ? "days" : "hours";
+    }
+
+    intervalValue =
+      intervalUnit === "days"
+        ? Math.max(1, Math.round(rawFrequencyHours / 24 || 1))
+        : Math.max(1, Math.round(rawFrequencyHours || 6));
+  }
+
+  if (!intervalUnit) {
+    intervalUnit = rawFrequencyHours >= 24 && rawFrequencyHours % 24 === 0 ? "days" : "hours";
+  }
+
+  const maximum = intervalUnit === "days" ? 90 : 720;
+  intervalValue = Math.min(maximum, Math.max(1, Math.round(intervalValue)));
+
+  return {
+    intervalUnit,
+    intervalValue,
+    frequencyHours: intervalUnit === "days" ? intervalValue * 24 : intervalValue,
+  };
+}
+
 function createNotificationSettings(settings = {}) {
-  const frequencyHours = Number(settings.frequencyHours ?? 6);
+  const interval = normalizeIntervalSettings(settings);
   const templates = Array.isArray(settings.templates)
     ? settings.templates.slice(0, 8)
-    : ["stockholm", "uppsala", "hela-sverige"];
+    : [];
   const categories = Array.isArray(settings.categories)
     ? settings.categories.slice(0, 12)
-    : ["Underläkare", "BT-läkare", "ST-läkare", "Legitimerad läkare", "Specialist"];
+    : ["UnderlĂ¤kare", "BT-lĂ¤kare", "ST-lĂ¤kare", "Legitimerad lĂ¤kare", "Specialist"];
   return {
     enabled: Boolean(settings.enabled),
-    frequencyHours: [6, 12, 24].includes(frequencyHours) ? frequencyHours : 6,
+    intervalUnit: interval.intervalUnit,
+    intervalValue: interval.intervalValue,
+    frequencyHours: interval.frequencyHours,
     templates: templates.length ? templates : ["stockholm", "uppsala", "hela-sverige"],
     categories: categories.length
       ? categories
-      : ["Underläkare", "BT-läkare", "ST-läkare", "Legitimerad läkare", "Specialist"],
+      : ["UnderlĂ¤kare", "BT-lĂ¤kare", "ST-lĂ¤kare", "Legitimerad lĂ¤kare", "Specialist"],
   };
 }
 
@@ -121,9 +165,9 @@ function buildFallbackCommuteResults(origin, destination) {
       id: "driving",
       label: "Bil",
       pill: "Bil",
-      durationText: "Beräknas i Google Maps",
-      distanceText: "Öppna länk för exakt restid",
-      note: "Google Maps öppnas med biltrafik och aktuell vardagstrafik för den valda tiden.",
+      durationText: "BerĂ¤knas i Google Maps",
+      distanceText: "Ă–ppna lĂ¤nk fĂ¶r exakt restid",
+      note: "Google Maps Ă¶ppnas med biltrafik och aktuell vardagstrafik fĂ¶r den valda tiden.",
       link: buildGoogleMapsLink({ origin, destination, modeId: "driving" }),
       visualWidth: 34,
     },
@@ -131,19 +175,19 @@ function buildFallbackCommuteResults(origin, destination) {
       id: "bus",
       label: "Buss",
       pill: "Kollektivt",
-      durationText: "Beräknas i Google Maps",
-      distanceText: "Öppna länk för exakt restid",
-      note: "Google Maps öppnas i kollektivtrafikläge. Buss och byten räknas där.",
+      durationText: "BerĂ¤knas i Google Maps",
+      distanceText: "Ă–ppna lĂ¤nk fĂ¶r exakt restid",
+      note: "Google Maps Ă¶ppnas i kollektivtrafiklĂ¤ge. Buss och byten rĂ¤knas dĂ¤r.",
       link: buildGoogleMapsLink({ origin, destination, modeId: "bus" }),
       visualWidth: 34,
     },
     {
       id: "rail",
-      label: "Tåg",
+      label: "TĂĄg",
       pill: "Kollektivt",
-      durationText: "Beräknas i Google Maps",
-      distanceText: "Öppna länk för exakt restid",
-      note: "Google Maps öppnas i kollektivtrafikläge. Tåg och byten räknas där.",
+      durationText: "BerĂ¤knas i Google Maps",
+      distanceText: "Ă–ppna lĂ¤nk fĂ¶r exakt restid",
+      note: "Google Maps Ă¶ppnas i kollektivtrafiklĂ¤ge. TĂĄg och byten rĂ¤knas dĂ¤r.",
       link: buildGoogleMapsLink({ origin, destination, modeId: "rail" }),
       visualWidth: 34,
     },
@@ -151,9 +195,9 @@ function buildFallbackCommuteResults(origin, destination) {
       id: "bicycling",
       label: "Cykel",
       pill: "Cykel",
-      durationText: "Beräknas i Google Maps",
-      distanceText: "Öppna länk för exakt restid",
-      note: "Google Maps öppnas i cykelläge så att du snabbt kan jämföra med andra alternativ.",
+      durationText: "BerĂ¤knas i Google Maps",
+      distanceText: "Ă–ppna lĂ¤nk fĂ¶r exakt restid",
+      note: "Google Maps Ă¶ppnas i cykellĂ¤ge sĂĄ att du snabbt kan jĂ¤mfĂ¶ra med andra alternativ.",
       link: buildGoogleMapsLink({ origin, destination, modeId: "bicycling" }),
       visualWidth: 34,
     },
@@ -165,11 +209,15 @@ async function loadSubscriptions() {
 
   try {
     const stored = JSON.parse(await fs.readFile(subscribersFile, "utf8"));
-    subscriptionState.subscribers = Array.isArray(stored.subscribers) ? stored.subscribers : [];
+    subscriptionState.subscribers = Array.isArray(stored.subscribers)
+      ? stored.subscribers
+          .map((subscriber) => normalizeSubscriber(subscriber))
+          .filter((subscriber) => looksLikeEmail(subscriber.email))
+      : [];
     subscriptionState.updatedAt = stored.updatedAt ?? null;
   } catch (error) {
     if (error.code !== "ENOENT") {
-      console.error("Kunde inte läsa lokal prenumerationsfil:", error);
+      console.error("Kunde inte lĂ¤sa lokal prenumerationsfil:", error);
     }
   }
 }
@@ -190,40 +238,101 @@ async function persistSubscriptions() {
   );
 }
 
-function upsertSubscription({ email, notifications }) {
+function normalizeSubscriber(entry = {}) {
+  const normalizedEmail = normalizeEmail(entry.email);
+  const profileId = normalizeProfileId(entry.profileId || normalizedEmail);
+  const now = new Date().toISOString();
+
+  return {
+    email: normalizedEmail,
+    profileId,
+    profileName: String(entry.profileName || profileId || normalizedEmail || "profil").trim(),
+    notifications: createNotificationSettings(entry.notifications),
+    unsubscribeToken: entry.unsubscribeToken || buildUnsubscribeToken(),
+    createdAt: entry.createdAt ?? now,
+    updatedAt: entry.updatedAt ?? now,
+    confirmedAt: entry.confirmedAt ?? null,
+    lastCheckedAt: entry.lastCheckedAt ?? null,
+    lastEmailedAt: entry.lastEmailedAt ?? null,
+    lastTestedAt: entry.lastTestedAt ?? null,
+    unsubscribedAt: entry.unsubscribedAt ?? null,
+  };
+}
+
+function findSubscriptionIndex({ profileId = "", email = "" } = {}) {
+  const normalizedProfileId = normalizeProfileId(profileId);
+  const normalizedEmail = normalizeEmail(email);
+
+  if (normalizedProfileId) {
+    const byProfile = subscriptionState.subscribers.findIndex(
+      (subscriber) => subscriber.profileId === normalizedProfileId
+    );
+    if (byProfile >= 0) {
+      return byProfile;
+    }
+  }
+
+  if (normalizedEmail) {
+    return subscriptionState.subscribers.findIndex(
+      (subscriber) => normalizeEmail(subscriber.email) === normalizedEmail
+    );
+  }
+
+  return -1;
+}
+
+function findSubscription(criteria = {}) {
+  const index = findSubscriptionIndex(criteria);
+  return index >= 0 ? subscriptionState.subscribers[index] : null;
+}
+
+function upsertSubscription({ email, notifications, profileId = "", profileName = "" }) {
   const normalizedEmail = normalizeEmail(email);
   const now = new Date().toISOString();
-  const existingIndex = subscriptionState.subscribers.findIndex(
-    (subscriber) => normalizeEmail(subscriber.email) === normalizedEmail
-  );
+  const normalizedProfileId = normalizeProfileId(profileId || normalizedEmail);
+  const existingIndex = findSubscriptionIndex({
+    profileId: normalizedProfileId,
+    email: normalizedEmail,
+  });
   const notificationSettings = createNotificationSettings(notifications);
 
   if (existingIndex >= 0) {
-    subscriptionState.subscribers[existingIndex] = {
+    subscriptionState.subscribers[existingIndex] = normalizeSubscriber({
       ...subscriptionState.subscribers[existingIndex],
       email: normalizedEmail,
+      profileId: normalizedProfileId,
+      profileName: profileName || subscriptionState.subscribers[existingIndex].profileName || normalizedProfileId,
       notifications: notificationSettings,
+      confirmedAt: subscriptionState.subscribers[existingIndex].confirmedAt ?? now,
       updatedAt: now,
       unsubscribedAt: notificationSettings.enabled ? null : subscriptionState.subscribers[existingIndex].unsubscribedAt,
-    };
+    });
 
     return subscriptionState.subscribers[existingIndex];
   }
 
-  const subscriber = {
+  const subscriber = normalizeSubscriber({
     email: normalizedEmail,
+    profileId: normalizedProfileId,
+    profileName: profileName || normalizedProfileId || normalizedEmail,
     notifications: notificationSettings,
-    unsubscribeToken: buildUnsubscribeToken(),
     createdAt: now,
     updatedAt: now,
     confirmedAt: now,
-    lastCheckedAt: null,
-    lastEmailedAt: null,
-    unsubscribedAt: null,
-  };
+  });
 
   subscriptionState.subscribers.push(subscriber);
   return subscriber;
+}
+
+function removeSubscription({ profileId = "", email = "" } = {}) {
+  const index = findSubscriptionIndex({ profileId, email });
+  if (index < 0) {
+    return null;
+  }
+
+  const [removed] = subscriptionState.subscribers.splice(index, 1);
+  return removed ?? null;
 }
 
 function unsubscribeByToken(token = "") {
@@ -278,7 +387,7 @@ async function loadCache() {
     });
   } catch (error) {
     if (error.code !== "ENOENT") {
-      console.error("Kunde inte läsa cachefil:", error);
+      console.error("Kunde inte lĂ¤sa cachefil:", error);
     }
   }
 }
@@ -322,7 +431,7 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
     return {
       results: buildFallbackCommuteResults(origin, destination),
       message:
-        "Google Maps-nyckel saknas på servern. Därför visas färdiga länkar men inte exakta restider ännu.",
+        "Google Maps-nyckel saknas pĂĄ servern. DĂ¤rfĂ¶r visas fĂ¤rdiga lĂ¤nkar men inte exakta restider Ă¤nnu.",
     };
   }
 
@@ -330,7 +439,7 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
   const definitions = [
     { id: "driving", label: "Bil", pill: "Bil", mode: "driving" },
     { id: "bus", label: "Buss", pill: "Kollektivt", mode: "transit", transitMode: "bus" },
-    { id: "rail", label: "Tåg", pill: "Kollektivt", mode: "transit", transitMode: "rail" },
+    { id: "rail", label: "TĂĄg", pill: "Kollektivt", mode: "transit", transitMode: "rail" },
     { id: "bicycling", label: "Cykel", pill: "Cykel", mode: "bicycling" },
   ];
 
@@ -367,14 +476,14 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
           pill: definition.pill,
           durationText: "Ingen rutt hittades",
           distanceText: "Kontrollera adressen",
-          note: "Google Maps kunde inte hitta en tydlig rutt för den här kombinationen ännu.",
+          note: "Google Maps kunde inte hitta en tydlig rutt fĂ¶r den hĂ¤r kombinationen Ă¤nnu.",
           link: buildGoogleMapsLink({ origin, destination, modeId: definition.id }),
           visualWidth: 20,
         };
       }
 
       const durationSeconds = leg.duration_in_traffic?.value ?? leg.duration?.value ?? 0;
-      const distanceText = leg.distance?.text ?? "Okänd distans";
+      const distanceText = leg.distance?.text ?? "OkĂ¤nd distans";
       const summary = payload.routes?.[0]?.summary;
 
       return {
@@ -384,8 +493,8 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
         durationText: formatDuration(durationSeconds),
         distanceText,
         note: summary
-          ? `Google Maps föreslår rutten via ${summary}.`
-          : "Beräknat utifrån vald avresetid och aktuell ruttlogik i Google Maps.",
+          ? `Google Maps fĂ¶reslĂĄr rutten via ${summary}.`
+          : "BerĂ¤knat utifrĂĄn vald avresetid och aktuell ruttlogik i Google Maps.",
         link: buildGoogleMapsLink({ origin, destination, modeId: definition.id }),
         visualWidth: estimateVisualWidth(durationSeconds),
       };
@@ -394,11 +503,15 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
 
   return {
     results,
-    message: "Restider hämtade från Google Maps och klara att jämföra.",
+    message: "Restider hĂ¤mtade frĂĄn Google Maps och klara att jĂ¤mfĂ¶ra.",
   };
 }
 
 function matchesTemplatePreference(job, templates = []) {
+  if (!templates.length) {
+    return true;
+  }
+
   if (templates.includes("hela-sverige")) {
     return true;
   }
@@ -452,16 +565,16 @@ function buildNotificationEmailHtml(subscriber, jobsForSubscriber, baseUrl) {
           <div style="padding:16px;border:1px solid #d8e6ee;border-radius:16px;background:#ffffff;">
             <strong style="display:block;font-size:16px;color:#10212b;">${job.title}</strong>
             <span style="display:block;margin-top:6px;color:#45606c;font-size:13px;">
-              ${job.category} · ${job.roleLabel ?? "Läkare"} · ${job.employer || "Arbetsgivare ej angiven"}
+              ${job.category} Â· ${job.roleLabel ?? "LĂ¤kare"} Â· ${job.employer || "Arbetsgivare ej angiven"}
             </span>
             <span style="display:block;margin-top:4px;color:#45606c;font-size:13px;">
-              ${job.location || "Okänd ort"} · ${job.sourceNames?.join(", ") || job.sourceName || "Okänd källa"}
+              ${job.location || "OkĂ¤nd ort"} Â· ${job.sourceNames?.join(", ") || job.sourceName || "OkĂ¤nd kĂ¤lla"}
             </span>
             <p style="margin:10px 0 0;color:#2d4754;font-size:14px;line-height:1.6;">
-              ${job.roleSummary || "Ny matchande annons upptäckt."}
+              ${job.roleSummary || "Ny matchande annons upptĂ¤ckt."}
             </p>
             <a href="${job.link}" style="display:inline-block;margin-top:12px;color:#0f7c8c;text-decoration:none;font-weight:700;">
-              Öppna annons
+              Ă–ppna annons
             </a>
           </div>
         </li>
@@ -472,15 +585,15 @@ function buildNotificationEmailHtml(subscriber, jobsForSubscriber, baseUrl) {
   return `
     <div style="font-family:Arial,sans-serif;background:#f4f8fb;padding:24px;color:#10212b;">
       <div style="max-width:760px;margin:0 auto;">
-        <h1 style="margin:0 0 8px;font-size:28px;">Nya läkarjobb matchar ditt konto</h1>
+        <h1 style="margin:0 0 8px;font-size:28px;">Nya lĂ¤karjobb matchar ditt konto</h1>
         <p style="margin:0 0 18px;line-height:1.6;color:#45606c;">
-          Hej. Här är ${jobsForSubscriber.length} nya annons${jobsForSubscriber.length === 1 ? "" : "er"} som matchar dina val för ${subscriber.email}.
+          Hej. HĂ¤r Ă¤r ${jobsForSubscriber.length} nya annons${jobsForSubscriber.length === 1 ? "" : "er"} som matchar dina val fĂ¶r ${subscriber.email}.
         </p>
         <ul style="margin:0;padding:0;">${items}</ul>
         ${
           unsubscribeLink
             ? `<p style="margin-top:18px;color:#45606c;font-size:13px;line-height:1.6;">
-                 Vill du inte ha fler notiser? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig här</a>.
+                 Vill du inte ha fler notiser? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig hĂ¤r</a>.
                </p>`
             : ""
         }
@@ -489,11 +602,128 @@ function buildNotificationEmailHtml(subscriber, jobsForSubscriber, baseUrl) {
   `;
 }
 
-async function sendEmailNotifications(jobs = []) {
+function buildSubscriptionWelcomeEmailHtml(subscriber, baseUrl) {
+  const unsubscribeLink = baseUrl
+    ? `${baseUrl.replace(/\/$/, "")}/unsubscribe?token=${subscriber.unsubscribeToken}`
+    : "";
+
+  return `
+    <div style="font-family:Arial,sans-serif;background:#f4f8fb;padding:24px;color:#10212b;">
+      <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #d8e6ee;border-radius:20px;padding:24px;">
+        <h1 style="margin:0 0 10px;font-size:28px;">Din prenumeration Ă¤r nu kopplad</h1>
+        <p style="margin:0 0 14px;line-height:1.7;color:#45606c;">
+          Profilen <strong>${subscriber.profileName}</strong> skickar nu jobbnotiser till <strong>${subscriber.email}</strong>.
+        </p>
+        <p style="margin:0 0 14px;line-height:1.7;color:#45606c;">
+          Intervall: var ${subscriber.notifications.intervalValue} ${subscriber.notifications.intervalUnit === "days" ? "dag" : "timme"}${subscriber.notifications.intervalValue === 1 ? "" : "r"}.
+        </p>
+        <p style="margin:0 0 14px;line-height:1.7;color:#45606c;">
+          OmrĂĄden: ${subscriber.notifications.templates.length ? subscriber.notifications.templates.join(", ") : "alla"}.
+          Roller: ${subscriber.notifications.categories.length ? subscriber.notifications.categories.join(", ") : "alla"}.
+        </p>
+        ${
+          unsubscribeLink
+            ? `<p style="margin:18px 0 0;color:#45606c;font-size:13px;line-height:1.6;">
+                 Vill du koppla bort notiserna? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig hĂ¤r</a>.
+               </p>`
+            : ""
+        }
+      </div>
+    </div>
+  `;
+}
+
+function buildSubscriptionTestEmailHtml(subscriber, baseUrl) {
+  const unsubscribeLink = baseUrl
+    ? `${baseUrl.replace(/\/$/, "")}/unsubscribe?token=${subscriber.unsubscribeToken}`
+    : "";
+
+  return `
+    <div style="font-family:Arial,sans-serif;background:#f4f8fb;padding:24px;color:#10212b;">
+      <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #d8e6ee;border-radius:20px;padding:24px;">
+        <h1 style="margin:0 0 10px;font-size:28px;">Testmail frĂĄn LĂ¤karjobb Radar</h1>
+        <p style="margin:0 0 14px;line-height:1.7;color:#45606c;">
+          Det hĂ¤r mailet bekrĂ¤ftar att prenumerationen fĂ¶r <strong>${subscriber.profileName}</strong> kan nĂĄ <strong>${subscriber.email}</strong>.
+        </p>
+        <p style="margin:0 0 14px;line-height:1.7;color:#45606c;">
+          NĂ¤sta riktiga utskick kommer nĂ¤r nya annonser matchar dina val.
+        </p>
+        ${
+          unsubscribeLink
+            ? `<p style="margin:18px 0 0;color:#45606c;font-size:13px;line-height:1.6;">
+                 Vill du koppla bort notiserna? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig hĂ¤r</a>.
+               </p>`
+            : ""
+        }
+      </div>
+    </div>
+  `;
+}
+
+async function sendEmailMessage({ to, subject, html }) {
   const apiKey = process.env.RESEND_API_KEY;
   const fromAddress = process.env.EMAIL_FROM;
 
-  if (!apiKey || !fromAddress || !subscriptionState.subscribers.length) {
+  if (!apiKey || !fromAddress) {
+    return { sent: false, reason: "not-configured" };
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      from: fromAddress,
+      to: [to],
+      subject,
+      html,
+    }),
+  });
+
+  return {
+    sent: response.ok,
+    reason: response.ok ? "ok" : `http-${response.status}`,
+  };
+}
+
+async function sendSubscriptionWelcomeEmail(subscriber) {
+  const baseUrl = process.env.APP_BASE_URL || `http://localhost:${port}`;
+  const result = await sendEmailMessage({
+    to: subscriber.email,
+    subject: `Prenumerationen ar kopplad for ${subscriber.profileName}`,
+    html: buildSubscriptionWelcomeEmailHtml(subscriber, baseUrl),
+  });
+
+  if (result.sent) {
+    const now = new Date().toISOString();
+    subscriber.confirmedAt = now;
+    subscriber.updatedAt = now;
+  }
+
+  return result;
+}
+
+async function sendSubscriptionTestEmail(subscriber) {
+  const baseUrl = process.env.APP_BASE_URL || `http://localhost:${port}`;
+  const result = await sendEmailMessage({
+    to: subscriber.email,
+    subject: `Testmail fran Lakarjobb Radar for ${subscriber.profileName}`,
+    html: buildSubscriptionTestEmailHtml(subscriber, baseUrl),
+  });
+
+  if (result.sent) {
+    const now = new Date().toISOString();
+    subscriber.lastTestedAt = now;
+    subscriber.updatedAt = now;
+  }
+
+  return result;
+}
+
+async function sendEmailNotifications(jobs = []) {
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM || !subscriptionState.subscribers.length) {
     return;
   }
 
@@ -524,7 +754,8 @@ async function sendEmailNotifications(jobs = []) {
         return false;
       }
 
-      return (subscriber.notifications.categories ?? []).includes(job.category);
+      const selectedCategories = subscriber.notifications.categories ?? [];
+      return selectedCategories.length === 0 || selectedCategories.includes(job.category);
     });
 
     subscriber.lastCheckedAt = now.toISOString();
@@ -533,21 +764,13 @@ async function sendEmailNotifications(jobs = []) {
       continue;
     }
 
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        from: fromAddress,
-        to: [subscriber.email],
-        subject: `${relevantJobs.length} nya läkarjobb matchar dina filter`,
-        html: buildNotificationEmailHtml(subscriber, relevantJobs, baseUrl),
-      }),
+    const response = await sendEmailMessage({
+      to: subscriber.email,
+      subject: `${relevantJobs.length} nya lakarjobb matchar dina filter`,
+      html: buildNotificationEmailHtml(subscriber, relevantJobs, baseUrl),
     });
 
-    if (response.ok) {
+    if (response.sent) {
       subscriber.lastEmailedAt = now.toISOString();
       subscriber.updatedAt = now.toISOString();
     }
@@ -555,7 +778,6 @@ async function sendEmailNotifications(jobs = []) {
 
   await persistSubscriptions();
 }
-
 function payload() {
   return {
     jobs: state.jobs,
@@ -591,7 +813,7 @@ async function refreshJobs({ reason = "manual" } = {}) {
     await sendEmailNotifications(state.jobs);
 
     console.log(
-      `[refresh:${reason}] ${state.jobs.length} jobb hämtade från ${state.sourceSummaries.length} källor`
+      `[refresh:${reason}] ${state.jobs.length} jobb hĂ¤mtade frĂĄn ${state.sourceSummaries.length} kĂ¤llor`
     );
   } catch (error) {
     state.lastError = error instanceof Error ? error.message : String(error);
@@ -618,7 +840,7 @@ app.get("/api/jobs", async (req, res) => {
   } catch (error) {
     res.status(500).json({
       ...payload(),
-      error: error instanceof Error ? error.message : "Okänt fel",
+      error: error instanceof Error ? error.message : "OkĂ¤nt fel",
     });
   }
 });
@@ -630,13 +852,22 @@ app.post("/api/refresh", async (_req, res) => {
   } catch (error) {
     res.status(500).json({
       ...payload(),
-      error: error instanceof Error ? error.message : "Okänt fel",
+      error: error instanceof Error ? error.message : "OkĂ¤nt fel",
     });
   }
 });
 
 app.get("/api/status", (_req, res) => {
   res.json(payload());
+});
+
+app.get("/api/subscriptions", (req, res) => {
+  const subscription = findSubscription({
+    profileId: String(req.query.profileId ?? ""),
+    email: String(req.query.email ?? ""),
+  });
+
+  res.json({ subscription });
 });
 
 app.post("/api/subscriptions", async (req, res) => {
@@ -649,26 +880,102 @@ app.post("/api/subscriptions", async (req, res) => {
 
     const subscription = upsertSubscription({
       email,
+      profileId: String(req.body?.profileId ?? ""),
+      profileName: String(req.body?.profileName ?? ""),
       notifications: req.body?.notifications ?? {},
     });
     await persistSubscriptions();
 
+    const welcomeRequested = req.body?.sendWelcome !== false;
+    let welcomeResult = { sent: false, reason: "skipped" };
+    if (welcomeRequested) {
+      welcomeResult = await sendSubscriptionWelcomeEmail(subscription);
+      await persistSubscriptions();
+    }
+
+    const message = welcomeResult.sent
+      ? `E-postnotiser ar sparade for ${subscription.email}. Ett bekraftelsemail har skickats.`
+      : `E-postnotiser ar sparade for ${subscription.email}.`;
+
     res.json({
-      message: `E-postnotiser är sparade för ${subscription.email}.`,
+      message,
       subscription,
+      welcomeSent: welcomeResult.sent,
+      welcomeReason: welcomeResult.reason,
     });
   } catch (error) {
     res.status(500).json({
-      error: error instanceof Error ? error.message : "Okänt fel",
+      error: error instanceof Error ? error.message : "Okant fel",
     });
   }
 });
 
+app.post("/api/subscriptions/test", async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    if (!looksLikeEmail(email)) {
+      res.status(400).json({ error: "Ogiltig e-postadress" });
+      return;
+    }
+
+    const subscription = upsertSubscription({
+      email,
+      profileId: String(req.body?.profileId ?? ""),
+      profileName: String(req.body?.profileName ?? ""),
+      notifications: req.body?.notifications ?? {},
+    });
+    await persistSubscriptions();
+
+    const testResult = await sendSubscriptionTestEmail(subscription);
+    if (!testResult.sent) {
+      res.status(503).json({
+        error: "Mailtjansten ar inte konfigurerad just nu.",
+        reason: testResult.reason,
+      });
+      return;
+    }
+
+    await persistSubscriptions();
+    res.json({
+      message: `Testmail skickat till ${subscription.email}.`,
+      sentAt: subscription.lastTestedAt,
+      subscription,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Okant fel",
+    });
+  }
+});
+
+app.delete("/api/subscriptions", async (req, res) => {
+  try {
+    const removed = removeSubscription({
+      profileId: String(req.body?.profileId ?? ""),
+      email: String(req.body?.email ?? ""),
+    });
+
+    if (!removed) {
+      res.status(404).json({ error: "Prenumerationen kunde inte hittas." });
+      return;
+    }
+
+    await persistSubscriptions();
+    res.json({
+      message: `E-postprenumerationen for ${removed.email} ar bortkopplad.`,
+      removed,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Okant fel",
+    });
+  }
+});
 app.get("/unsubscribe", async (req, res) => {
   try {
     const token = String(req.query.token ?? "");
     if (!token) {
-      res.status(400).send("<h1>Ogiltig avregistreringslänk</h1>");
+      res.status(400).send("<h1>Ogiltig avregistreringslĂ¤nk</h1>");
       return;
     }
 
@@ -688,13 +995,13 @@ app.get("/unsubscribe", async (req, res) => {
           <title>Avregistrerad</title>
         </head>
         <body style="font-family:Arial,sans-serif;padding:32px;background:#f4f8fb;color:#10212b;">
-          <h1>Du är nu avregistrerad</h1>
+          <h1>Du Ă¤r nu avregistrerad</h1>
           <p>Inga fler jobbnotiser skickas till <strong>${subscriber.email}</strong>.</p>
         </body>
       </html>
     `);
   } catch (error) {
-    res.status(500).send(`<h1>Något gick fel</h1><p>${error instanceof Error ? error.message : "Okänt fel"}</p>`);
+    res.status(500).send(`<h1>NĂĄgot gick fel</h1><p>${error instanceof Error ? error.message : "OkĂ¤nt fel"}</p>`);
   }
 });
 
@@ -705,7 +1012,7 @@ app.post("/api/commute", async (req, res) => {
     const departureAt = String(req.body?.departureAt ?? "").trim();
 
     if (!origin || !destination) {
-      res.status(400).json({ error: "Både start och destination behövs." });
+      res.status(400).json({ error: "BĂĄde start och destination behĂ¶vs." });
       return;
     }
 
@@ -721,7 +1028,7 @@ app.post("/api/commute", async (req, res) => {
         String(req.body?.origin ?? ""),
         String(req.body?.destination ?? "")
       ),
-      message: error instanceof Error ? error.message : "Kunde inte räkna restider just nu.",
+      message: error instanceof Error ? error.message : "Kunde inte rĂ¤kna restider just nu.",
     });
   }
 });
@@ -737,7 +1044,7 @@ if (!state.lastUpdated) {
   try {
     await refreshJobs({ reason: "startup" });
   } catch (error) {
-    console.error("Första uppdateringen misslyckades:", error);
+    console.error("FĂ¶rsta uppdateringen misslyckades:", error);
   }
 }
 
@@ -750,5 +1057,6 @@ setInterval(() => {
 state.nextScheduledRefreshAt ||= buildNextRefreshTimestamp();
 
 app.listen(port, () => {
-  console.log(`Läkarjobb-servern kör på http://localhost:${port}`);
+  console.log(`LĂ¤karjobb-servern kĂ¶r pĂĄ http://localhost:${port}`);
 });
+
