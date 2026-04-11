@@ -54,6 +54,8 @@ const vipProfiles = [
   { id: "marcdshark", label: "marcdshark" },
   { id: "adawozniak", label: "adawozniak" },
 ];
+const legacyStorageKeys = ["doctor-jobs-radar-v5", "doctor-jobs-radar-v4", "doctor-jobs-radar-v3"];
+const legacyLocalProfileIds = ["lokal-profil", "local-profile", "legacy-profile", "default-profile"];
 
 const storageKey = "doctor-jobs-radar-v6";
 const unknownLocationLabels = new Set(["", "okänd ort", "okand ort", "unknown", "remote", "distans"]);
@@ -64,12 +66,12 @@ const state = {
   stats: {},
   lastUpdated: null,
   nextScheduledRefreshAt: null,
-  activeTemplate: "stockholm",
+  activeTemplates: new Set(),
   activePipeline: "all",
   activeAgeFilter: "all",
   activeSort: "earliest",
   searchQuery: "",
-  activeCategories: new Set(categories),
+  activeCategories: new Set(),
   activeSources: new Set(),
   bookmarks: new Set(),
   statuses: {},
@@ -320,17 +322,13 @@ function normalizeAccountId(value = "") {
     .slice(0, 40);
 }
 
-function looksLikeUsername(value = "") {
-  return /^[a-z0-9._-]{3,40}$/i.test(String(value).trim());
-}
-
 function resolveAccountMode(value = "") {
   if (looksLikeEmail(value)) {
     return "email";
   }
 
-  if (looksLikeUsername(value)) {
-    return "username";
+  if (isVipAccount(value)) {
+    return "vip";
   }
 
   return null;
@@ -345,12 +343,38 @@ function isVipAccount(value = "") {
   return Boolean(getVipProfile(value));
 }
 
+function hasAccountData(account = {}) {
+  return Boolean((account.bookmarks ?? []).length || Object.keys(account.statuses ?? {}).length);
+}
+
+function mergeUniqueValues(primary = [], fallback = []) {
+  return Array.from(new Set([...(fallback ?? []), ...(primary ?? [])]));
+}
+
+function pickLatestTimestamp(...candidates) {
+  return candidates
+    .map((candidate) => toDate(candidate))
+    .filter(Boolean)
+    .sort((left, right) => right.getTime() - left.getTime())[0]
+    ?.toISOString() ?? new Date().toISOString();
+}
+
+function mergeStatuses(primary = {}, fallback = {}) {
+  const merged = { ...(fallback ?? {}), ...(primary ?? {}) };
+  Object.entries(fallback ?? {}).forEach(([jobId, status]) => {
+    if (!(jobId in (primary ?? {})) || primary[jobId] === "active") {
+      merged[jobId] = status;
+    }
+  });
+  return merged;
+}
+
 function createNotificationSettings() {
   return {
     enabled: false,
     frequencyHours: 6,
-    templates: templates.map((template) => template.id),
-    categories: [...categories],
+    templates: [],
+    categories: [],
     syncMode: "local",
     syncedAt: null,
     statusMessage: "",
@@ -363,10 +387,10 @@ function normalizeNotificationSettings(settings = {}, legacyAccount = {}) {
   );
   const templatesCandidate = Array.isArray(settings.templates)
     ? settings.templates
-    : templates.map((template) => template.id);
+    : [];
   const categoriesCandidate = Array.isArray(settings.categories)
     ? settings.categories
-    : [...categories];
+    : [];
   const normalizedTemplates = templatesCandidate.filter((templateId) =>
     templates.some((template) => template.id === templateId)
   );
@@ -375,12 +399,36 @@ function normalizeNotificationSettings(settings = {}, legacyAccount = {}) {
   return {
     enabled: Boolean(settings.enabled ?? legacyAccount.notificationsEnabled ?? false),
     frequencyHours: [6, 12, 24].includes(frequencyCandidate) ? frequencyCandidate : 6,
-    templates: normalizedTemplates.length ? normalizedTemplates : templates.map((template) => template.id),
-    categories: normalizedCategories.length ? normalizedCategories : [...categories],
+    templates: normalizedTemplates,
+    categories: normalizedCategories,
     syncMode: settings.syncMode ?? "local",
     syncedAt: settings.syncedAt ?? null,
     statusMessage: settings.statusMessage ?? "",
   };
+}
+
+function mergeNotificationSettings(primary = {}, fallback = {}) {
+  const normalizedPrimary = normalizeNotificationSettings(primary);
+  const normalizedFallback = normalizeNotificationSettings(fallback);
+  const primaryHasTemplates = Array.isArray(primary?.templates);
+  const primaryHasCategories = Array.isArray(primary?.categories);
+
+  return normalizeNotificationSettings({
+    ...normalizedFallback,
+    ...normalizedPrimary,
+    enabled: Boolean(normalizedPrimary.enabled || normalizedFallback.enabled),
+    frequencyHours: [6, 12, 24].includes(Number(normalizedPrimary.frequencyHours))
+      ? Number(normalizedPrimary.frequencyHours)
+      : Number(normalizedFallback.frequencyHours) || 6,
+    templates: primaryHasTemplates ? normalizedPrimary.templates : normalizedFallback.templates,
+    categories: primaryHasCategories ? normalizedPrimary.categories : normalizedFallback.categories,
+    syncMode:
+      normalizedPrimary.syncMode && normalizedPrimary.syncMode !== "local"
+        ? normalizedPrimary.syncMode
+        : normalizedFallback.syncMode ?? normalizedPrimary.syncMode ?? "local",
+    syncedAt: normalizedPrimary.syncedAt ?? normalizedFallback.syncedAt ?? null,
+    statusMessage: normalizedPrimary.statusMessage || normalizedFallback.statusMessage || "",
+  });
 }
 
 function createAccountProfile(accountName = "") {
@@ -403,6 +451,24 @@ function normalizeAccountProfile(accountId, account = {}) {
     statuses: account.statuses && typeof account.statuses === "object" ? account.statuses : {},
     notificationSettings: normalizeNotificationSettings(account.notificationSettings, account),
   };
+}
+
+function mergeAccountProfiles(accountId, primary = {}, fallback = {}) {
+  const normalizedPrimary = normalizeAccountProfile(accountId, primary);
+  const normalizedFallback = normalizeAccountProfile(accountId, fallback);
+
+  return normalizeAccountProfile(accountId, {
+    ...normalizedFallback,
+    ...normalizedPrimary,
+    name: normalizedPrimary.name || normalizedFallback.name || accountId,
+    bookmarks: mergeUniqueValues(normalizedPrimary.bookmarks, normalizedFallback.bookmarks),
+    statuses: mergeStatuses(normalizedPrimary.statuses, normalizedFallback.statuses),
+    notificationSettings: mergeNotificationSettings(
+      normalizedPrimary.notificationSettings,
+      normalizedFallback.notificationSettings
+    ),
+    lastUsedAt: pickLatestTimestamp(normalizedPrimary.lastUsedAt, normalizedFallback.lastUsedAt),
+  });
 }
 
 function ensureAccountProfile(accountId, accountName = "") {
@@ -441,6 +507,140 @@ function saveActiveAccountState() {
   };
 }
 
+function safeReadStoredState(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractAccountsFromStoredPayload(payload = {}) {
+  const extractedAccounts = Object.fromEntries(
+    Object.entries(payload.accounts ?? {}).map(([accountId, account]) => [
+      accountId,
+      normalizeAccountProfile(accountId, account),
+    ])
+  );
+
+  const legacyBookmarks = Array.isArray(payload.bookmarks) ? payload.bookmarks : [];
+  const legacyStatuses = payload.statuses && typeof payload.statuses === "object" ? payload.statuses : {};
+  if (legacyBookmarks.length || Object.keys(legacyStatuses).length) {
+    const fallbackName = String(payload.activeAccountName || payload.activeAccountId || "lokal-profil").trim();
+    const fallbackId = normalizeAccountId(fallbackName) || "lokal-profil";
+    extractedAccounts[fallbackId] = mergeAccountProfiles(fallbackId, extractedAccounts[fallbackId], {
+      name: fallbackName || fallbackId,
+      bookmarks: legacyBookmarks,
+      statuses: legacyStatuses,
+      lastUsedAt: payload.lastUsedAt ?? new Date().toISOString(),
+    });
+  }
+
+  return {
+    accounts: extractedAccounts,
+    activeAccountId: normalizeAccountId(payload.activeAccountId || payload.activeAccountName || ""),
+    activeAccountName: String(payload.activeAccountName || payload.activeAccountId || "").trim(),
+  };
+}
+
+function recoverLegacyAccounts(currentPayload = null) {
+  let recoveredAccounts = {};
+  let recoveredActiveAccountId = "";
+  let recoveredActiveAccountName = "";
+
+  const mergePayload = (payload) => {
+    if (!payload) {
+      return;
+    }
+
+    const extracted = extractAccountsFromStoredPayload(payload);
+    Object.entries(extracted.accounts).forEach(([accountId, account]) => {
+      recoveredAccounts[accountId] = recoveredAccounts[accountId]
+        ? mergeAccountProfiles(accountId, recoveredAccounts[accountId], account)
+        : normalizeAccountProfile(accountId, account);
+    });
+
+    if (!recoveredActiveAccountId && extracted.activeAccountId) {
+      recoveredActiveAccountId = extracted.activeAccountId;
+    }
+
+    if (!recoveredActiveAccountName && extracted.activeAccountName) {
+      recoveredActiveAccountName = extracted.activeAccountName;
+    }
+  };
+
+  mergePayload(currentPayload);
+  legacyStorageKeys.forEach((key) => {
+    mergePayload(safeReadStoredState(key));
+  });
+
+  return {
+    accounts: recoveredAccounts,
+    activeAccountId: recoveredActiveAccountId,
+    activeAccountName: recoveredActiveAccountName,
+  };
+}
+
+function pickLegacySeedAccount(vipAccountId) {
+  const candidates = Object.entries(state.accounts).filter(
+    ([accountId, account]) =>
+      accountId !== vipAccountId &&
+      !isVipAccount(accountId) &&
+      !accountId.includes("@") &&
+      hasAccountData(account)
+  );
+  if (!candidates.length) {
+    return null;
+  }
+
+  const aliasMatch = candidates.find(([accountId]) => legacyLocalProfileIds.includes(accountId));
+  if (aliasMatch) {
+    return aliasMatch[1];
+  }
+
+  return candidates
+    .sort((left, right) => {
+      const leftTime = toDate(left[1]?.lastUsedAt)?.getTime() ?? 0;
+      const rightTime = toDate(right[1]?.lastUsedAt)?.getTime() ?? 0;
+      return rightTime - leftTime;
+    })[0]?.[1] ?? null;
+}
+
+function recoverVipProfileIfNeeded(accountId) {
+  if (!isVipAccount(accountId)) {
+    return;
+  }
+
+  const vipProfile = getVipProfile(accountId);
+  const currentProfile = ensureAccountProfile(accountId, vipProfile?.label ?? accountId);
+  if (hasAccountData(currentProfile)) {
+    return;
+  }
+
+  const seedAccount = pickLegacySeedAccount(accountId);
+  if (!seedAccount) {
+    return;
+  }
+
+  state.accounts[accountId] = mergeAccountProfiles(
+    accountId,
+    {
+      ...currentProfile,
+      name: vipProfile?.label ?? currentProfile.name ?? accountId,
+    },
+    {
+      ...seedAccount,
+      name: vipProfile?.label ?? accountId,
+    }
+  );
+}
+
 function loadAccountState(accountId) {
   const account = accountId ? ensureAccountProfile(accountId, state.activeAccountName) : null;
   state.bookmarks = new Set(account?.bookmarks ?? []);
@@ -460,6 +660,7 @@ function setActiveAccount(accountName) {
   }
 
   ensureAccountProfile(normalizedId, accountName.trim());
+  recoverVipProfileIfNeeded(normalizedId);
 
   state.activeAccountId = normalizedId;
   state.activeAccountName = state.accounts[normalizedId].name || accountName.trim() || normalizedId;
@@ -485,54 +686,49 @@ function buildNextMondayEight() {
 
 function loadStoredState() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(storageKey));
-    if (!parsed) {
+    const parsed = safeReadStoredState(storageKey);
+    const recovered = recoverLegacyAccounts(parsed);
+
+    if (!parsed && Object.keys(recovered.accounts).length === 0) {
       ensureVipProfiles();
       return;
     }
 
-    state.activeTemplate = parsed.activeTemplate ?? state.activeTemplate;
-    state.activePipeline = parsed.activePipeline ?? state.activePipeline;
-    state.activeAgeFilter = parsed.activeAgeFilter ?? state.activeAgeFilter;
-    state.activeSort = parsed.activeSort ?? state.activeSort;
-    state.accounts = Object.fromEntries(
-      Object.entries(parsed.accounts ?? {}).map(([accountId, account]) => [
-        accountId,
-        normalizeAccountProfile(accountId, account),
-      ])
-    );
-    if (
-      Object.keys(state.accounts).length === 0 &&
-      ((parsed.bookmarks ?? []).length || Object.keys(parsed.statuses ?? {}).length)
-    ) {
-      state.accounts["lokal-profil"] = normalizeAccountProfile("lokal-profil", {
-        name: "lokal-profil",
-        bookmarks: parsed.bookmarks ?? [],
-        statuses: parsed.statuses ?? {},
-        lastUsedAt: new Date().toISOString(),
-      });
-      state.activeAccountId = parsed.activeAccountId ?? "lokal-profil";
-      state.activeAccountName = parsed.activeAccountName ?? "lokal-profil";
-    } else {
-      state.activeAccountId = parsed.activeAccountId ?? "";
-      state.activeAccountName =
-        parsed.activeAccountName ?? state.accounts[state.activeAccountId]?.name ?? "";
+    if (parsed) {
+      state.activePipeline = parsed.activePipeline ?? state.activePipeline;
+      state.activeAgeFilter = parsed.activeAgeFilter ?? state.activeAgeFilter;
+      state.activeSort = parsed.activeSort ?? state.activeSort;
+
+      const restoredTemplates = Array.isArray(parsed.activeTemplates)
+        ? parsed.activeTemplates.filter((templateId) => templates.some((template) => template.id === templateId))
+        : parsed.activeTemplate && parsed.activeTemplate !== "stockholm"
+          ? templates.some((template) => template.id === parsed.activeTemplate)
+            ? [parsed.activeTemplate]
+            : []
+          : [];
+      state.activeTemplates = new Set(restoredTemplates);
+
+      const restoredCategories = (parsed.activeCategories ?? []).filter((item) =>
+        categories.includes(item)
+      );
+      state.activeCategories = new Set(restoredCategories);
+      state.activeSources = new Set(parsed.activeSources ?? []);
+      state.selectedCommuteJobId = parsed.selectedCommuteJobId ?? "";
+      state.commuteOrigin = parsed.commuteOrigin ?? "";
+      state.commuteDestination = parsed.commuteDestination ?? "";
+      state.commuteDepartureAt = parsed.commuteDepartureAt ?? buildNextMondayEight();
     }
+
+    state.accounts = recovered.accounts;
+    state.activeAccountId =
+      normalizeAccountId(parsed?.activeAccountId || recovered.activeAccountId || "") || "";
+    state.activeAccountName =
+      String(parsed?.activeAccountName || recovered.activeAccountName || "").trim() ||
+      state.accounts[state.activeAccountId]?.name ||
+      "";
 
     ensureVipProfiles();
-
-    const restoredCategories = (parsed.activeCategories ?? []).filter((item) =>
-      categories.includes(item)
-    );
-    if (restoredCategories.length) {
-      state.activeCategories = new Set(restoredCategories);
-    }
-
-    state.activeSources = new Set(parsed.activeSources ?? []);
-    state.selectedCommuteJobId = parsed.selectedCommuteJobId ?? "";
-    state.commuteOrigin = parsed.commuteOrigin ?? "";
-    state.commuteDestination = parsed.commuteDestination ?? "";
-    state.commuteDepartureAt = parsed.commuteDepartureAt ?? buildNextMondayEight();
+    recoverVipProfileIfNeeded(state.activeAccountId);
     loadAccountState(state.activeAccountId);
   } catch (error) {
     console.warn("Kunde inte läsa sparat tillstånd", error);
@@ -545,7 +741,7 @@ function persistState() {
   localStorage.setItem(
     storageKey,
     JSON.stringify({
-      activeTemplate: state.activeTemplate,
+      activeTemplates: Array.from(state.activeTemplates),
       activePipeline: state.activePipeline,
       activeAgeFilter: state.activeAgeFilter,
       activeSort: state.activeSort,
@@ -798,15 +994,14 @@ function getPipelineStatus(jobId) {
 }
 
 function matchesTemplate(job) {
-  if (state.activeTemplate === "hela-sverige") {
+  if (state.activeTemplates.size === 0 || state.activeTemplates.has("hela-sverige")) {
     return true;
   }
 
-  if (state.activeTemplate === "uppsala") {
-    return job.uppsalaMatch;
-  }
-
-  return job.stockholmMatch;
+  return (
+    (state.activeTemplates.has("stockholm") && job.stockholmMatch) ||
+    (state.activeTemplates.has("uppsala") && job.uppsalaMatch)
+  );
 }
 
 function matchesPipeline(job) {
@@ -903,7 +1098,7 @@ function getFilteredJobs() {
   return getGroupedJobs()
     .filter(
       (job) =>
-        state.activeCategories.has(job.category) &&
+        (state.activeCategories.size === 0 || state.activeCategories.has(job.category)) &&
         matchesTemplate(job) &&
         matchesPipeline(job) &&
         matchesSearch(job) &&
@@ -996,11 +1191,15 @@ function renderTemplates() {
   templates.forEach((template) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `template-button ${state.activeTemplate === template.id ? "is-active" : ""}`;
+    button.className = `template-button ${state.activeTemplates.has(template.id) ? "is-active" : ""}`;
     button.textContent = template.label;
     button.title = template.description;
     button.addEventListener("click", () => {
-      state.activeTemplate = template.id;
+      if (state.activeTemplates.has(template.id)) {
+        state.activeTemplates.delete(template.id);
+      } else {
+        state.activeTemplates.add(template.id);
+      }
       persistState();
       render();
     });
@@ -1045,7 +1244,7 @@ function renderCategoryFilters() {
     button.className = `category-pill ${state.activeCategories.has(category) ? "is-active" : ""}`;
     button.innerHTML = `<span>${category}</span><strong>${counts[category] ?? 0}</strong>`;
     button.addEventListener("click", () => {
-      if (state.activeCategories.has(category) && state.activeCategories.size > 1) {
+      if (state.activeCategories.has(category)) {
         state.activeCategories.delete(category);
       } else {
         state.activeCategories.add(category);
@@ -1080,7 +1279,7 @@ function renderSourceList() {
   elements.sourceList.innerHTML = "";
 
   state.sourceSummaries.forEach((source) => {
-    const isVisible = state.activeSources.size === 0 || state.activeSources.has(source.id);
+    const isVisible = state.activeSources.has(source.id);
     const button = document.createElement("button");
     button.type = "button";
     button.className = `source-item ${isVisible ? "is-active" : ""}`;
@@ -1201,30 +1400,56 @@ function updateNotificationSetting(mutator) {
   }
 }
 
+function applyPanelCopyTweaks() {
+  const accountShell = elements.accountInput?.closest(".account-shell");
+  const accountPanelDescription = accountShell?.previousElementSibling?.querySelector("p");
+  const accountLabel = document.querySelector('label[for="accountInput"]');
+  const templatePanelDescription = elements.templateButtons?.closest(".panel")?.querySelector(".panel-head p");
+  const categoryPanelDescription = elements.categoryFilters?.closest(".panel")?.querySelector(".panel-head p");
+
+  if (accountPanelDescription) {
+    accountPanelDescription.textContent =
+      "Logga in med e-post eller profilnamn. Sparade statusar och bokmarken halls isar per konto.";
+  }
+
+  if (accountLabel) {
+    accountLabel.textContent = "E-post eller profilnamn";
+  }
+
+  if (elements.accountInput) {
+    elements.accountInput.placeholder = "t.ex. profilnamn eller namn@mail.se";
+  }
+
+  if (templatePanelDescription) {
+    templatePanelDescription.textContent =
+      "Valj ett eller flera omraden. Om inget ar valt visas hela flodet.";
+  }
+
+  if (categoryPanelDescription) {
+    categoryPanelDescription.textContent =
+      "Valj en eller flera lakarroller. Om inget ar valt visas alla.";
+  }
+}
+
 function renderAccountPanel() {
+  applyPanelCopyTweaks();
+
   if (elements.accountInput) {
     elements.accountInput.value = state.activeAccountName;
   }
 
-  const activeVipProfile = getVipProfile(state.activeAccountId || state.activeAccountName);
-
   if (elements.accountBadge) {
     elements.accountBadge.textContent = isSignedIn()
-      ? activeVipProfile
-        ? `Inloggad som ${state.activeAccountName} · VIP-profil`
-        : `Inloggad som ${state.activeAccountName}`
+      ? `Inloggad som ${state.activeAccountName}`
       : "Ej inloggad";
-    elements.accountBadge.classList.toggle("is-vip", Boolean(activeVipProfile));
   }
 
   if (elements.accountHint) {
     elements.accountHint.textContent = isSignedIn()
-      ? activeVipProfile
-        ? "VIP-profilen ar aktiv utan losenord. Bokmarken och knappstatusar sparas separat for just den har profilen."
-        : looksLikeEmail(state.activeAccountName)
-          ? "Dina bokmarken, knappstatusar och notifieringsval sparas nu under det har kontot."
-          : "Detta anvandarnamn fungerar utan losenord. Bokmarken och knappstatusar sparas separat i webblasaren."
-      : "Skapa konto eller logga in med e-post eller användarnamn for att spara Bokmarken, Sokt, Intervju, Avbojt och Ej intressant.";
+      ? looksLikeEmail(state.activeAccountName)
+        ? "Dina bokmarken, knappstatusar och notifieringsval sparas nu under det har kontot."
+        : "Profilen ar aktiv utan losenord. Bokmarken och knappstatusar autosparas separat for den har profilen."
+      : "Skapa konto eller logga in med e-post eller profilnamn for att spara Bokmarken, Sokt, Intervju, Avbojt och Ej intressant.";
   }
 
   if (elements.signoutButton) {
@@ -1252,7 +1477,7 @@ function renderAccountPanel() {
     (templateId) => {
       updateNotificationSetting((settings) => {
         const selected = new Set(settings.templates);
-        if (selected.has(templateId) && selected.size > 1) {
+        if (selected.has(templateId)) {
           selected.delete(templateId);
         } else {
           selected.add(templateId);
@@ -1270,7 +1495,7 @@ function renderAccountPanel() {
     (category) => {
       updateNotificationSetting((settings) => {
         const selected = new Set(settings.categories);
-        if (selected.has(category) && selected.size > 1) {
+        if (selected.has(category)) {
           selected.delete(category);
         } else {
           selected.add(category);
@@ -1282,11 +1507,9 @@ function renderAccountPanel() {
 
   if (elements.notificationHint) {
     if (!isSignedIn()) {
-      elements.notificationHint.textContent = "Logga in med e-post for mailnotiser, eller använd användarnamn som marcdshark och adawozniak for lokala profiler utan losenord.";
+      elements.notificationHint.textContent = "Logga in med e-post for mailnotiser. Profilnamn utan e-post fungerar for lokal sparning i webblasaren.";
     } else if (!looksLikeEmail(state.activeAccountName)) {
-      elements.notificationHint.textContent = activeVipProfile
-        ? "VIP-profil aktiv utan losenord. Byt bara till en e-postadress om du senare vill koppla mailnotiser."
-        : "Anvandarnamn fungerar utan losenord. Byt till en e-postadress om du vill koppla kontot till mailnotiser.";
+      elements.notificationHint.textContent = "Profilen ar aktiv utan e-post. Byt till en e-postadress om du senare vill koppla mailnotiser.";
     } else if (notificationSettings.statusMessage) {
       elements.notificationHint.textContent = notificationSettings.statusMessage;
     } else if (notificationSettings.enabled) {
@@ -1301,19 +1524,6 @@ function renderAccountPanel() {
   }
 
   elements.accountPresets.innerHTML = "";
-
-  vipProfiles.forEach((profile) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `account-preset is-vip ${state.activeAccountId === profile.id ? "is-active" : ""}`;
-    button.textContent = `${profile.label} · VIP`;
-    button.addEventListener("click", () => {
-      setActiveAccount(profile.label);
-      persistState();
-      render();
-    });
-    elements.accountPresets.append(button);
-  });
 
   Object.entries(state.accounts)
     .sort((left, right) => {
@@ -1728,11 +1938,14 @@ function createJobCard(job) {
 }
 
 function updateBoardHeading(filteredJobs) {
-  const currentTemplate = templates.find((template) => template.id === state.activeTemplate);
   const currentPipeline = pipelineViews.find((view) => view.id === state.activePipeline);
   const currentSort = sortOptions.find((option) => option.id === state.activeSort);
+  const selectedTemplates = templates.filter((template) => state.activeTemplates.has(template.id));
+  const templateLabel = selectedTemplates.length
+    ? selectedTemplates.map((template) => template.label).join(" + ")
+    : "Alla omraden";
 
-  elements.boardTitle.textContent = `${currentPipeline.label} · ${currentTemplate.label}`;
+  elements.boardTitle.textContent = `${currentPipeline.label} · ${templateLabel}`;
   elements.boardSubTitle.textContent = `${filteredJobs.length} sammanslagna annonser efter filter. Sortering: ${currentSort.label.toLowerCase()}. Rollen bedöms från annonsens titel och brödtext, och varje kort visar även firma, startinfo och chef- eller kontaktuppgifter när de har kunnat hittas.`;
 }
 
@@ -2028,10 +2241,11 @@ elements.refreshButton.addEventListener("click", () => {
 });
 
 elements.clearFiltersButton.addEventListener("click", () => {
+  state.activeTemplates = new Set();
   state.activePipeline = "all";
   state.activeAgeFilter = "all";
   state.activeSort = "earliest";
-  state.activeCategories = new Set(categories);
+  state.activeCategories = new Set();
   state.activeSources = new Set();
   state.searchQuery = "";
   elements.searchInput.value = "";
@@ -2055,23 +2269,21 @@ function submitAccountFromInput({ create = false } = {}) {
   const accountMode = resolveAccountMode(candidate);
   if (!accountMode) {
     if (elements.accountHint) {
-      elements.accountHint.textContent =
-        "Skriv en giltig e-postadress eller ett användarnamn som marcdshark eller adawozniak.";
+      elements.accountHint.textContent = "Skriv en giltig e-postadress eller ett godkant profilnamn.";
     }
     return false;
   }
 
   setActiveAccount(candidate);
-  const vipProfile = getVipProfile(candidate);
   const account = getActiveAccountProfile();
   if (create && account) {
-    account.name = looksLikeEmail(candidate) ? candidate.trim().toLowerCase() : normalizeAccountId(candidate);
+    account.name = looksLikeEmail(candidate)
+      ? candidate.trim().toLowerCase()
+      : getVipProfile(candidate)?.label ?? normalizeAccountId(candidate);
     account.notificationSettings.statusMessage =
-      vipProfile
-        ? `${account.name} ar aktiverad som VIP-profil utan losenord.`
-        : accountMode === "email"
-          ? "Kontot ar skapat. Du kan nu spara jobbstatus och aktivera e-postnotiser for just den har adressen."
-          : "Kontot ar skapat. Detta användarnamn fungerar utan losenord och sparas lokalt i webblasaren.";
+      accountMode === "email"
+        ? "Kontot ar skapat. Du kan nu spara jobbstatus och aktivera e-postnotiser for just den har adressen."
+        : "Profilen ar aktiv utan losenord. Bokmarken och statusknappar autosparas for den har profilen.";
   }
   persistState();
   render();
