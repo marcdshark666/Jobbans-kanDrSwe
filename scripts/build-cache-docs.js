@@ -2,45 +2,37 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { aggregateJobs } from "../src/lib/job-sources.js";
+import { aggregateJobs, refreshIntervalMs } from "../src-v2/lib/job-sources.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDirectory = path.resolve(__dirname, "..");
-const dataDirectory = path.join(rootDirectory, "data");
+const dataDirectory = path.join(rootDirectory, "docs", "data");
 const cacheFile = path.join(dataDirectory, "jobs-cache.json");
 
-function buildNextWeekdayRefreshTimestamp(fromDate) {
-  const refreshHoursUtc = [0, 6, 12, 18];
-  const candidate = new Date(fromDate);
+function buildNextWeekdayRefreshTimestamp(fromDate = new Date()) {
+  const date = new Date(fromDate);
+  const scheduleHoursUtc = [0, 6, 12, 18];
 
-  while (true) {
-    const day = candidate.getUTCDay();
-    const isWeekday = day >= 1 && day <= 5;
+  for (let dayOffset = 0; dayOffset < 8; dayOffset += 1) {
+    const candidateDate = new Date(date);
+    candidateDate.setUTCDate(candidateDate.getUTCDate() + dayOffset);
+    candidateDate.setUTCMinutes(0, 0, 0);
 
-    if (isWeekday) {
-      for (const hour of refreshHoursUtc) {
-        const slot = new Date(
-          Date.UTC(
-            candidate.getUTCFullYear(),
-            candidate.getUTCMonth(),
-            candidate.getUTCDate(),
-            hour,
-            0,
-            0,
-            0
-          )
-        );
-
-        if (slot.getTime() > fromDate.getTime()) {
-          return slot.toISOString();
-        }
-      }
+    const weekday = candidateDate.getUTCDay();
+    if (weekday === 0 || weekday === 6) {
+      continue;
     }
 
-    candidate.setUTCDate(candidate.getUTCDate() + 1);
-    candidate.setUTCHours(0, 0, 0, 0);
+    for (const hour of scheduleHoursUtc) {
+      candidateDate.setUTCHours(hour, 0, 0, 0);
+      if (candidateDate.getTime() > date.getTime()) {
+        return candidateDate.toISOString();
+      }
+    }
   }
+
+  return new Date(date.getTime() + refreshIntervalMs).toISOString();
 }
 
 async function main() {

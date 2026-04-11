@@ -1,74 +1,216 @@
-const express = require('express');
-const path = require('path');
-const fs = require('fs');
+import express from "express";
+import path from "node:path";
+import fs from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+import { aggregateJobs, refreshIntervalMs } from "./src/lib/job-sources.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const CACHE_FILE = path.join(__dirname, 'data', 'jobs-cache.json');
+const port = Number(process.env.PORT || 3000);
+const dataDirectory = path.join(__dirname, "data");
+const cacheFile = path.join(dataDirectory, "jobs-cache.json");
+
+const state = {
+  jobs: [],
+  sourceSummaries: [],
+  stats: {},
+  history: {},
+  lastUpdated: null,
+  nextScheduledRefreshAt: null,
+  lastError: null,
+  isRefreshing: false,
+};
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, "public")));
+app.use("/data", express.static(path.join(__dirname, "data")));
 
-// Ensure data dir exists
-if (!fs.existsSync(path.join(__dirname, 'data'))) {
-  fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
+async function ensureDataDirectory() {
+  await fs.mkdir(dataDirectory, { recursive: true });
 }
 
-// GET /api/jobs - return cached jobs
-app.get('/api/jobs', (req, res) => {
+async function persistCache() {
+  await ensureDataDirectory();
+  await fs.writeFile(
+    cacheFile,
+    JSON.stringify(
+      {
+        jobs: state.jobs,
+        sourceSummaries: state.sourceSummaries,
+        stats: state.stats,
+        history: state.history,
+        lastUpdated: state.lastUpdated,
+        nextScheduledRefreshAt: state.nextScheduledRefreshAt,
+        lastError: state.lastError,
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+}
+
+async function loadCache() {
+  await ensureDataDirectory();
+
   try {
-    if (fs.existsSync(CACHE_FILE)) {
-      const data = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-      res.json(data);
-    } else {
-      res.json({ jobs: [], lastUpdated: null, sources: [] });
+    const cached = JSON.parse(await fs.readFile(cacheFile, "utf8"));
+    Object.assign(state, {
+      jobs: cached.jobs ?? [],
+      sourceSummaries: cached.sourceSummaries ?? [],
+      stats: cached.stats ?? {},
+      history: cached.history ?? {},
+      lastUpdated: cached.lastUpdated ?? null,
+      nextScheduledRefreshAt: cached.nextScheduledRefreshAt ?? null,
+      lastError: cached.lastError ?? null,
+    });
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.error("Kunde inte läsa cachefil:", error);
     }
-  } catch (e) {
-    res.status(500).json({ error: 'Could not read cache', jobs: [], lastUpdated: null });
   }
-});
+}
 
-// POST /api/refresh - trigger a cache rebuild
-app.post('/api/refresh', async (req, res) => {
+function buildNextRefreshTimestamp(fromDate = new Date()) {
+  const refreshHoursUtc = [0, 6, 12, 18];
+  const candidate = new Date(fromDate);
+
+  while (true) {
+    const day = candidate.getUTCDay();
+    const isWeekday = day >= 1 && day <= 5;
+
+    if (isWeekday) {
+      for (const hour of refreshHoursUtc) {
+        const slot = new Date(
+          Date.UTC(
+            candidate.getUTCFullYear(),
+            candidate.getUTCMonth(),
+            candidate.getUTCDate(),
+            hour,
+            0,
+            0,
+            0
+          )
+        );
+
+        if (slot.getTime() > fromDate.getTime()) {
+          return slot.toISOString();
+        }
+      }
+    }
+
+    candidate.setUTCDate(candidate.getUTCDate() + 1);
+    candidate.setUTCHours(0, 0, 0, 0);
+  }
+}
+
+function payload() {
+  return {
+    jobs: state.jobs,
+    sourceSummaries: state.sourceSummaries,
+    stats: state.stats,
+    lastUpdated: state.lastUpdated,
+    nextScheduledRefreshAt: state.nextScheduledRefreshAt,
+    lastError: state.lastError,
+    isRefreshing: state.isRefreshing,
+  };
+}
+
+async function refreshJobs({ reason = "manual" } = {}) {
+  if (state.isRefreshing) {
+    return payload();
+  }
+
+  state.isRefreshing = true;
+  state.lastError = null;
+  let thrownError = null;
+
   try {
-    const { buildCache } = require('./scripts/build-cache');
-    const result = await buildCache();
-    res.json({ success: true, count: result.jobs.length, lastUpdated: result.lastUpdated });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
+    const nextSnapshot = await aggregateJobs({ previousHistory: state.history });
+
+    state.jobs = nextSnapshot.jobs;
+    state.sourceSummaries = nextSnapshot.sourceSummaries;
+    state.stats = nextSnapshot.stats;
+    state.history = nextSnapshot.history;
+    state.lastUpdated = nextSnapshot.lastUpdated;
+    state.nextScheduledRefreshAt = buildNextRefreshTimestamp();
+
+    await persistCache();
+
+    console.log(
+      `[refresh:${reason}] ${state.jobs.length} jobb hämtade från ${state.sourceSummaries.length} källor`
+    );
+  } catch (error) {
+    state.lastError = error instanceof Error ? error.message : String(error);
+    await persistCache();
+    thrownError = error;
+  } finally {
+    state.isRefreshing = false;
   }
-});
 
-// GET /api/status - health check
-app.get('/api/status', (req, res) => {
-  let lastUpdated = null;
-  let count = 0;
-  if (fs.existsSync(CACHE_FILE)) {
-    try {
-      const d = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-      lastUpdated = d.lastUpdated;
-      count = d.jobs ? d.jobs.length : 0;
-    } catch (e) {}
+  if (thrownError) {
+    throw thrownError;
   }
-  res.json({ status: 'ok', lastUpdated, jobCount: count });
-});
 
-// Fallback to SPA
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+  return payload();
+}
 
-app.listen(PORT, () => {
-  console.log(`Läkarjobb Portal körs på http://localhost:${PORT}`);
-  // Auto-refresh every 30 minutes
-  setInterval(async () => {
-    try {
-      console.log('[Auto-refresh] Hämtar jobb...');
-      const { buildCache } = require('./scripts/build-cache');
-      await buildCache();
-      console.log('[Auto-refresh] Klar.');
-    } catch (e) {
-      console.error('[Auto-refresh] Fel:', e.message);
+app.get("/api/jobs", async (req, res) => {
+  try {
+    if (req.query.refresh === "1") {
+      await refreshJobs({ reason: "query" });
     }
-  }, 30 * 60 * 1000);
+
+    res.json(payload());
+  } catch (error) {
+    res.status(500).json({
+      ...payload(),
+      error: error instanceof Error ? error.message : "Okänt fel",
+    });
+  }
+});
+
+app.post("/api/refresh", async (_req, res) => {
+  try {
+    const refreshed = await refreshJobs({ reason: "button" });
+    res.json(refreshed);
+  } catch (error) {
+    res.status(500).json({
+      ...payload(),
+      error: error instanceof Error ? error.message : "Okänt fel",
+    });
+  }
+});
+
+app.get("/api/status", (_req, res) => {
+  res.json(payload());
+});
+
+app.use((_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+await loadCache();
+
+if (!state.lastUpdated) {
+  try {
+    await refreshJobs({ reason: "startup" });
+  } catch (error) {
+    console.error("Första uppdateringen misslyckades:", error);
+  }
+}
+
+setInterval(() => {
+  refreshJobs({ reason: "schedule" }).catch((error) => {
+    console.error("Schemalagd uppdatering misslyckades:", error);
+  });
+}, refreshIntervalMs);
+
+state.nextScheduledRefreshAt ||= buildNextRefreshTimestamp();
+
+app.listen(port, () => {
+  console.log(`Läkarjobb-servern kör på http://localhost:${port}`);
 });

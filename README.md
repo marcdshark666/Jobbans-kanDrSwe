@@ -1,94 +1,79 @@
-# 🏥 LäkarJobb — Sveriges Läkarjobb-portal
+# Läkarjobb Sweeper
 
-En komplett jobbportal för läkare i Sverige. Hämtar annonser automatiskt var 30:e minut från 12+ jobbkällor och visar dem kategoriserade per läkartyp.
+En webapp som samlar jobb för:
 
-## 🌐 Se sidan live
-**https://marcdshark666.github.io/Jobbans-kanDrSwe/**
+- underläkare
+- BT-läkare / bastjänstgöringsläkare
+- legitimerad läkare
+- specialister / specialistläkare
 
----
+Appen hämtar jobb från flera källor och visar dem i separata kategorier. Den innehåller även:
 
-## ✨ Funktioner
+- snabbmall för `Stockholm`
+- snabbmall för `Hela Sverige`
+- auto-refresh var 30:e minut
+- manuell knapp för att hämta om jobb direkt
+- markering av dubbletter
+- bokmärken / favoriter som sparas i webbläsaren
+- statusflöde för `Sökt`, `Intervju` och `Avböjt`
 
-| Funktion | Beskrivning |
-|---|---|
-| **4 läkarkategorier** | Underläkare, BT-läkare, Legitimerad läk., Specialistläkare |
-| **Regionfilter** | Stockholm / Hela Sverige |
-| **Källfilter** | Välj vilka jobbkällor att visa |
-| **Manuell refresh** | Knapp för att hämta nya jobb direkt |
-| **Auto-refresh** | Uppdateras automatiskt var 30:e minut |
-| **Bokmärken ⭐** | Spara favoriter lokalt i webbläsaren |
-| **Sökt 📨** | Markera annonser du sökt |
-| **Intervju 🎯** | Markera annonser du fått intervju för |
-| **Avböjt ❌** | Markera annonser du fått avslag från |
-| **Dubblettvarning** | Visar om en annons redan publicerats på annan källa |
-| **Sökfunktion** | Sök via titel, plats eller källa |
-| **Grid/Lista-vy** | Välj hur jobben visas |
+## Källor i första versionen
 
-## 📰 Jobbkällor
+- Capio
+- Meliva
+- Kry
+- Praktikertjänst
+- Region Stockholm
+- Stockholms läns sjukvårdsområde
+- Södersjukhuset
+- Arbetsförmedlingen
+- Internetmedicin Jobb
+- Vakanser.se
+- Varbi
+- LinkedIn
 
-- **Jobtech/Platsbanken** (Arbetsförmedlingens öppna API)
-- **Capio**
-- **Meliva**
-- **Kry**
-- **Praktikertjänst**
-- **Region Stockholm**
-- **Södersjukhuset**
-- **Arbetsförmedlingen**
-- **Internetmedicin**
-- **Vakanser.se**
-- **Varbi.se**
-- **LinkedIn**
-- **SLSO** (Stockholms Läns Sjukvårdsområde)
+Observera att publika jobbsidor ändrar HTML då och då. Om en källa ändrar struktur kan just den parsern behöva finjusteras senare.
 
-## 🚀 Kör lokalt
+## Starta lokalt
 
-```bash
-# Klona repot
-git clone https://github.com/marcdshark666/Jobbans-kanDrSwe.git
-cd Jobbans-kanDrSwe
+1. Installera beroenden:
 
-# Installera
+```powershell
 npm install
+```
 
-# Bygg initial cache (hämtar jobb från alla källor)
-node scripts/build-cache.js
+2. Starta servern:
 
-# Starta servern
+```powershell
 npm start
-# Öppna http://localhost:3000
 ```
 
-## 📁 Projektstruktur
+3. Öppna:
 
-```
-├── public/
-│   ├── index.html       # Huvud-HTML
-│   ├── styles.css       # Futuristisk CSS
-│   └── app.js           # Frontend-logik
-├── scripts/
-│   └── build-cache.js   # Jobbinsamlare (alla källorna)
-├── data/
-│   └── jobs-cache.json  # Genererad jobbcache
-├── .github/
-│   └── workflows/
-│       ├── deploy-pages.yml    # Publicerar till GitHub Pages
-│       └── refresh-cache.yml  # Uppdaterar cache var 30:e min
-├── server.js            # Express backend (för lokal körning)
-└── package.json
+```text
+http://localhost:3000
 ```
 
-## 📋 GitHub Actions
+## Projektstruktur
 
-Två automatiska flöden:
-1. **Deploy Pages** — Publicerar sidan när du pushar till `main`
-2. **Refresh Cache** — Hämtar nya jobb var 30:e minut (kräver att GitHub Pages är konfigurerat med Actions-source)
+- `server.js` serverar sidan och kör uppdateringar var 30:e minut
+- `src/lib/job-sources.js` hämtar och filtrerar jobb från källorna
+- `src/lib/job-utils.js` innehåller kategorisering, ortmatchning och dubblettlogik
+- `public/` innehåller gränssnittet
 
-## ⚙️ GitHub Pages-inställningar
+## GitHub
 
-1. Gå till **Settings → Pages**
-2. Välj **Source: GitHub Actions**
-3. Spara
+Om du vill koppla detta till ditt repo:
 
----
+```powershell
+git init
+git branch -M main
+git remote add origin https://github.com/marcdshark666/Jobbans-kanDrSwe.git
+git add .
+git commit -m "Build doctor job aggregation website"
+git push -u origin main
+```
 
-*Skapad 2026 — LäkarJobb Portal*
+## Viktig notering
+
+Den här lösningen är byggd som en Node-app, inte som en ren GitHub Pages-sida. Det är medvetet, eftersom manuell refresh och server-side hämtning från många källor fungerar bäst med en backend.
