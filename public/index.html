@@ -74,18 +74,21 @@
           <section class="panel">
             <div class="panel-head">
               <h2>Konto</h2>
-              <p>Logga in med ett namn sa sparas bokmarken och knappstatus separat per profil.</p>
+              <p>Skapa ett enkelt konto med e-post. Bokmarken, statusknappar och notifieringsval sparas separat per konto.</p>
             </div>
             <div class="account-shell">
-              <label class="account-label" for="accountInput">Kontonamn</label>
+              <label class="account-label" for="accountInput">E-postadress</label>
               <div class="account-actions">
                 <input
                   id="accountInput"
-                  type="text"
-                  maxlength="40"
-                  placeholder="t.ex. marcdshark"
+                  type="email"
+                  maxlength="120"
+                  placeholder="t.ex. marcdshark@gmail.com"
                   autocomplete="off"
                 />
+                <button class="ghost-button account-button" id="createAccountButton" type="button">
+                  Skapa konto
+                </button>
                 <button class="primary-button account-button" id="loginButton" type="button">
                   Login
                 </button>
@@ -96,11 +99,49 @@
               <div class="account-status-row">
                 <strong id="accountBadge">Ej inloggad</strong>
                 <p id="accountHint">
-                  Skriv bara ett namn. Varje profil far sin egen sparade vy i den har
-                  webblasaren.
+                  Fyll bara i e-postadress. Inget losenord behovs. Varje konto far sin egen
+                  sparade vy i den har webblasaren.
                 </p>
               </div>
               <div class="account-presets" id="accountPresets"></div>
+
+              <section class="notification-shell">
+                <div class="notification-head">
+                  <div>
+                    <strong>E-postnotiser</strong>
+                    <p>Valj vilka jobb som ska trigga mail till kontot nar nya annonser upptacks.</p>
+                  </div>
+                  <label class="toggle-switch">
+                    <input id="notificationToggle" type="checkbox" />
+                    <span>Aktivera</span>
+                  </label>
+                </div>
+
+                <div class="notification-grid">
+                  <div class="notification-field">
+                    <label for="notificationFrequencySelect">Frekvens</label>
+                    <select id="notificationFrequencySelect">
+                      <option value="6">Var 6:e timme</option>
+                      <option value="12">Var 12:e timme</option>
+                      <option value="24">Daglig</option>
+                    </select>
+                  </div>
+
+                  <div class="notification-field">
+                    <span class="account-label">Omrade</span>
+                    <div class="notification-tags" id="notificationTemplateFilters"></div>
+                  </div>
+
+                  <div class="notification-field">
+                    <span class="account-label">Roller</span>
+                    <div class="notification-tags" id="notificationCategoryFilters"></div>
+                  </div>
+                </div>
+
+                <p class="notification-hint" id="notificationHint">
+                  Logga in med e-post for att spara notifieringsval.
+                </p>
+              </section>
             </div>
           </section>
 
@@ -232,6 +273,60 @@
               Flodet star redo. Klistra in en annons och din profil for att skapa ett utkast.
             </p>
           </section>
+
+          <section class="board panel-board commute-board">
+            <div class="board-head">
+              <div>
+                <p class="section-kicker">Pendling</p>
+                <h2>Google Maps och restid</h2>
+              </div>
+              <p>Valj en annons med knappen "Pendla hit", ange startadress eller anvand din plats och jamfor bil, kollektivtrafik och cykel.</p>
+            </div>
+
+            <div class="commute-selected-job" id="commuteSelectedJob">
+              Ingen annons vald annu. Tryck "Pendla hit" pa ett jobbkort for att fylla i destinationen automatiskt.
+            </div>
+
+            <div class="commute-grid">
+              <div class="commute-field">
+                <label for="commuteOriginInput">Startadress eller ort</label>
+                <input
+                  id="commuteOriginInput"
+                  type="text"
+                  placeholder="t.ex. Bromma, Stockholm eller din fullstandiga adress"
+                />
+              </div>
+
+              <div class="commute-field">
+                <label for="commuteDestinationInput">Destination</label>
+                <input
+                  id="commuteDestinationInput"
+                  type="text"
+                  placeholder="Fylls i automatiskt nar du valjer en annons"
+                />
+              </div>
+
+              <div class="commute-field">
+                <label for="commuteDepartureInput">Avgangstid</label>
+                <input id="commuteDepartureInput" type="datetime-local" />
+              </div>
+            </div>
+
+            <div class="generator-actions">
+              <button class="ghost-button" id="useLocationButton" type="button">
+                Anvand min plats
+              </button>
+              <button class="primary-button" id="calculateCommuteButton" type="button">
+                Rakna pendling
+              </button>
+            </div>
+
+            <p class="generator-status" id="commuteStatus">
+              Mandag klockan 08:00 ar forifyllt som standard for att spegla vardagstrafik.
+            </p>
+
+            <div class="commute-result-grid" id="commuteResultGrid"></div>
+          </section>
         </section>
       </main>
     </div>
@@ -252,6 +347,10 @@
             <strong class="job-location"></strong>
           </div>
           <div>
+            <span class="meta-label">Firma</span>
+            <strong class="job-employer"></strong>
+          </div>
+          <div>
             <span class="meta-label">Källa</span>
             <strong class="job-source"></strong>
           </div>
@@ -262,6 +361,10 @@
           <div>
             <span class="meta-label">Soker</span>
             <strong class="job-seeking-role"></strong>
+          </div>
+          <div>
+            <span class="meta-label">Start</span>
+            <strong class="job-start-info"></strong>
           </div>
           <div>
             <span class="meta-label">Länk</span>

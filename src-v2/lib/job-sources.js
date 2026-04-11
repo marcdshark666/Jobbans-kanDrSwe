@@ -8,14 +8,19 @@ import {
   categoryRank,
   classifyJob,
   cleanUrl,
+  containsExcludedNonDoctorRole,
   createHistoryEntry,
   extractDate,
   extractContactEntries,
+  extractEmployer,
   extractLocation,
+  extractStartInfo,
+  hasExpiredDeadlineNotice,
   inferRoleLabel,
   isIgnoredHref,
   isNoiseTitle,
   matchesStockholm,
+  matchesUppsala,
   normalizeWhitespace,
   summarizeTitle,
 } from "./job-utils.js";
@@ -118,6 +123,19 @@ const sources = [
     url: "https://www.linkedin.com/jobs/doctor-jobs-stockholm",
     allowHref: ["/jobs/view/"],
     blockHref: ["/company/"],
+  },
+  {
+    id: "ledigajobb",
+    name: "Ledigajobb.se",
+    url: "https://ledigajobb.se/pr/l%C3%A4kare",
+    allowHref: ["https://ledigajobb.se/jobb/"],
+  },
+  {
+    id: "region-uppsala",
+    name: "Region Uppsala",
+    url: "https://regionuppsala.se/jobba-hos-oss/lediga-tjanster/?occupationGroup=0&query=l%C3%A4kare&sortBy=enddate&summerJob=false",
+    allowHref: ["/jobba-hos-oss/lediga-tjanster/"],
+    requireContext: ["Lediga jobb i Region Uppsala", "ST-läkare", "Specialistläkare"],
   },
 ];
 
@@ -243,6 +261,11 @@ async function enrichJobFromDetail(job, source) {
     const combinedContext = normalizeWhitespace(
       [job.rawContext, detailText, relatedContactText].filter(Boolean).join(" | ")
     );
+
+    if (hasExpiredDeadlineNotice(combinedContext)) {
+      return null;
+    }
+
     const upgradedCategory = classifyJob(job.title, combinedContext) ?? job.category;
 
     return {
@@ -250,8 +273,12 @@ async function enrichJobFromDetail(job, source) {
       category: upgradedCategory,
       roleLabel: inferRoleLabel(job.title, combinedContext),
       roleSummary: buildRoleSummary(job.title, combinedContext),
+      employer: extractEmployer(combinedContext, job.employer || source.name),
+      startInfo: extractStartInfo(combinedContext) || job.startInfo || "",
       detailSnippet: detailText.slice(0, 320),
       contacts,
+      uppsalaMatch: matchesUppsala(combinedContext),
+      stockholmMatch: matchesStockholm(combinedContext),
       rawContext: combinedContext,
     };
   } catch {
@@ -391,7 +418,11 @@ function extractCandidates(html, source) {
       return;
     }
 
-    if (/sjukskoterska|psykolog|arbetsterapeut|fysioterapeut|underskoterska|tandlakare/i.test(title)) {
+    if (
+      containsExcludedNonDoctorRole(title) ||
+      /psykolog|arbetsterapeut|fysioterapeut|tandlakare/i.test(title) ||
+      hasExpiredDeadlineNotice(combined)
+    ) {
       return;
     }
 
@@ -406,9 +437,12 @@ function extractCandidates(html, source) {
       roleLabel: inferRoleLabel(title, combined),
       roleSummary: buildRoleSummary(title, combined),
       location: extractLocation(combined),
+      employer: extractEmployer(combined, source.name),
+      startInfo: extractStartInfo(combined),
       publishedAt: extractDate(combined),
       link: cleanedHref,
       stockholmMatch: matchesStockholm(combined),
+      uppsalaMatch: matchesUppsala(combined),
       rawContext: combined,
       contacts: [],
     });
@@ -502,6 +536,7 @@ function buildStats(jobs, sourceSummaries) {
   return {
     totalJobs: jobs.length,
     stockholmJobs: jobs.filter((job) => job.stockholmMatch).length,
+    uppsalaJobs: jobs.filter((job) => job.uppsalaMatch).length,
     sverigeJobs: jobs.filter((job) => !job.stockholmMatch).length,
     duplicateJobs: jobs.filter((job) => job.isDuplicate).length,
     sourceCount: sourceSummaries.filter((source) => source.status === "ok").length,
@@ -517,9 +552,9 @@ export async function aggregateJobs({ previousHistory = {} } = {}) {
     try {
       const html = await fetchHtml(source);
       const sourceJobs = dedupeWithinRefresh(extractCandidates(html, source));
-      const enrichedSourceJobs = await mapWithConcurrency(sourceJobs, detailConcurrency, (job) =>
-        enrichJobFromDetail(job, source)
-      );
+      const enrichedSourceJobs = (
+        await mapWithConcurrency(sourceJobs, detailConcurrency, (job) => enrichJobFromDetail(job, source))
+      ).filter(Boolean);
 
       collectedJobs.push(...enrichedSourceJobs);
       sourceSummaries.push({

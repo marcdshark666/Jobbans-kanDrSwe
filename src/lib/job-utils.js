@@ -4,6 +4,10 @@ const stockholmTerms = [
   "stockholm",
   "stockholms lan",
   "stockholm county",
+  "ekero",
+  "stenhamra",
+  "faringso",
+  "bromma",
   "solna",
   "sundbyberg",
   "nacka",
@@ -24,7 +28,22 @@ const stockholmTerms = [
   "st eriks ogonsjukhus",
 ];
 
-const unknownLocations = new Set(["", "okand ort", "unknown", "remote", "distans"]);
+const uppsalaTerms = [
+  "uppsala",
+  "uppsala lan",
+  "enkoping",
+  "knivsta",
+  "tierp",
+  "osthammar",
+  "alvkarleby",
+  "heby",
+  "habo",
+  "akademiska",
+  "lasarettet i enkoping",
+  "region uppsala",
+];
+
+const unknownLocations = new Set(["", "okand ort", "unknown", "remote", "distans", "jobb i fokus"]);
 
 const swedishMonthMap = {
   januari: "01",
@@ -44,6 +63,7 @@ const swedishMonthMap = {
 export const categoryOrder = [
   "Underläkare",
   "BT-läkare",
+  "ST-läkare",
   "Legitimerad läkare",
   "Specialist",
 ];
@@ -89,7 +109,11 @@ export function cleanUrl(rawUrl = "") {
 
 export function classifyJob(title = "", context = "") {
   const combinedText = normalizeForCompare(`${title} ${context}`);
-  if (combinedText.includes("tandlakare") || combinedText.includes("odontolog")) {
+  if (
+    containsExcludedNonDoctorRole(title) ||
+    combinedText.includes("tandlakare") ||
+    combinedText.includes("odontolog")
+  ) {
     return null;
   }
 
@@ -98,6 +122,10 @@ export function classifyJob(title = "", context = "") {
 
   if (matchesBtRole(titleText)) {
     return "BT-läkare";
+  }
+
+  if (matchesStRole(titleText)) {
+    return "ST-läkare";
   }
 
   if (matchesSpecialistRole(titleText)) {
@@ -116,6 +144,10 @@ export function classifyJob(title = "", context = "") {
     return "BT-läkare";
   }
 
+  if (matchesStRole(signalText)) {
+    return "ST-läkare";
+  }
+
   if (matchesSpecialistRole(signalText)) {
     return "Specialist";
   }
@@ -129,6 +161,12 @@ export function classifyJob(title = "", context = "") {
   }
 
   return null;
+}
+
+export function containsExcludedNonDoctorRole(value = "") {
+  return /sjukskotersk|underskotersk|skotersk|barnmorsk|omvardnad|nurse|nursing/i.test(
+    normalizeForCompare(value)
+  );
 }
 
 function buildRoleSignalText(title = "", context = "") {
@@ -156,6 +194,17 @@ function matchesBtRole(text = "") {
   );
 }
 
+function matchesStRole(text = "") {
+  return (
+    text.includes("st lakare") ||
+    text.includes("st tjanst") ||
+    text.includes("specialiseringstjanstgoring") ||
+    text.includes("sikte pa st") ||
+    text.includes("med mojlighet till st") ||
+    text.includes("blivande st")
+  );
+}
+
 function matchesUnderlakareRole(text = "") {
   return (
     text.includes("underlakare") ||
@@ -168,11 +217,11 @@ function matchesUnderlakareRole(text = "") {
 
 function matchesSpecialistRole(text = "") {
   return (
+    text.includes("spec lakare") ||
     text.includes("specialistlakare") ||
     text.includes("specialist i") ||
     text.includes("specialist inom") ||
     text.includes("overlakare") ||
-    text.includes("st lakare") ||
     text.includes("allmanspecialist") ||
     text.includes("radiolog") ||
     text.includes("ortoped") ||
@@ -196,6 +245,11 @@ function matchesLegitimeradRole(text = "") {
 export function matchesStockholm(text = "") {
   const normalized = normalizeForCompare(text);
   return stockholmTerms.some((term) => normalized.includes(term));
+}
+
+export function matchesUppsala(text = "") {
+  const normalized = normalizeForCompare(text);
+  return uppsalaTerms.some((term) => normalized.includes(term));
 }
 
 export function extractDate(text = "") {
@@ -240,7 +294,10 @@ export function extractLocation(text = "") {
     /(?:Ort|Plats|Placering|Var ligger arbetsplatsen\?|Location)\s*[:|]?\s*([A-ZÅÄÖa-zåäö0-9,/\- ]{2,80})/i
   );
   if (labeledMatch) {
-    return normalizeWhitespace(labeledMatch[1]);
+    const candidate = normalizeWhitespace(labeledMatch[1]);
+    if (isPlausibleEmployer(candidate)) {
+      return candidate;
+    }
   }
 
   const swedenMatch = compact.match(
@@ -258,14 +315,18 @@ export function extractLocation(text = "") {
   }
 
   const cityOnly = compact.match(
-    /\b(Stockholm|Solna|Sundbyberg|Nacka|Huddinge|Södertälje|Sollentuna|Täby|Uppsala|Malmö|Göteborg|Varberg|Halmstad|Enköping|Lysekil|Vällingby|Haninge|Farsta|Sigtuna|Vaxholm|Danderyd|Skövde|Skåne|Östergötland|Västra Götaland|Sverige)\b/
+    /\b(Stockholm|Solna|Sundbyberg|Nacka|Huddinge|Ekerö|Stenhamra|Södertälje|Sollentuna|Täby|Uppsala|Knivsta|Tierp|Östhammar|Enköping|Malmö|Göteborg|Varberg|Halmstad|Lysekil|Vällingby|Haninge|Farsta|Sigtuna|Vaxholm|Danderyd|Skövde|Skåne|Östergötland|Västra Götaland|Sverige)\b/
   );
   if (cityOnly) {
     return cityOnly[1];
   }
 
-  if (/sodersjukhuset|sos|stockholms centrum|karolinska|danderyd/i.test(normalizeForCompare(compact))) {
+  if (/sodersjukhuset|sos|stockholms centrum|karolinska|danderyd|ekero|stenhamra/i.test(normalizeForCompare(compact))) {
     return "Stockholm";
+  }
+
+  if (/akademiska|region uppsala|lasarettet i enkoping|uppsala/i.test(normalizeForCompare(compact))) {
+    return "Uppsala";
   }
 
   return "Okänd ort";
@@ -274,6 +335,53 @@ export function extractLocation(text = "") {
 export function normalizeLocationForCompare(location = "") {
   const normalized = normalizeForCompare(location);
   return unknownLocations.has(normalized) ? "" : normalized;
+}
+
+export function extractEmployer(text = "", fallback = "") {
+  const compact = normalizeWhitespace(text);
+
+  const labeledMatch = compact.match(
+    /(?:Organisation|Organization|Arbetsgivare|Employer|Klinik|Verksamhet)\s*[:|]?\s*([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&,\-./ ]{2,90})/
+  );
+  if (labeledMatch) {
+    return normalizeWhitespace(labeledMatch[1]);
+  }
+
+  const byTextMatch = compact.match(
+    /(?:hos|på|till)\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&,\-./ ]{2,80}?)(?:\s+(?:i|med|som|Stockholm|Uppsala|Sverige)\b|$)/
+  );
+  if (byTextMatch) {
+    const candidate = normalizeWhitespace(byTextMatch[1]);
+    if (isPlausibleEmployer(candidate)) {
+      return candidate;
+    }
+  }
+
+  return fallback || "";
+}
+
+export function extractStartInfo(text = "") {
+  const compact = normalizeWhitespace(text);
+  const match = compact.match(
+    /(?:Tillträde|Startdatum|Start)\s*[:|]?\s*([^|.]{3,120})/i
+  );
+
+  if (match) {
+    const candidate = normalizeWhitespace(match[1]);
+    if (
+      !/annonsera jobb|rekryteringssystem|vanliga fragor|jobbsokare|karriartips|integritet|familj/i.test(
+        normalizeForCompare(candidate)
+      )
+    ) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
+export function hasExpiredDeadlineNotice(text = "") {
+  return /observera att sista ansokningsdag har passerat/i.test(normalizeForCompare(text));
 }
 
 export function buildJobId({ sourceId, title, location, link }) {
@@ -415,6 +523,10 @@ export function inferRoleLabel(title = "", context = "") {
     return "BT-läkare";
   }
 
+  if (category === "ST-läkare") {
+    return specialty ? `ST-läkare inom ${specialty}` : "ST-läkare";
+  }
+
   if (category === "Underläkare") {
     return "Underläkare";
   }
@@ -459,6 +571,12 @@ export function buildRoleSummary(title = "", context = "") {
 
   if (roleLabel === "BT-läkare") {
     return "Söker BT-läkare med god klinisk grund, samarbetsförmåga och vilja att utvecklas i verksamheten.";
+  }
+
+  if (roleLabel.startsWith("ST-läkare")) {
+    return specialty
+      ? `Söker ${roleLabel.toLowerCase()} med handledningsbar kompetens och tydligt intresse för ${specialty}.`
+      : "Söker ST-läkare med god klinisk grund, utvecklingsdriv och stark samarbetsförmåga.";
   }
 
   if (roleLabel === "Legitimerad läkare") {
@@ -609,4 +727,15 @@ export function extractContactEntries(text = "", sourceName = "") {
   });
 
   return Array.from(deduped.values()).slice(0, 6);
+}
+
+function isPlausibleEmployer(value = "") {
+  const normalized = normalizeForCompare(value);
+  return (
+    Boolean(normalized) &&
+    !/annonsera jobb|rekryteringssystem|vanliga fragor|jobbsokare|karriartips|integritet|cookie|hitta dromjobbet|logga in|sign in/i.test(
+      normalized
+    ) &&
+    normalized.split(" ").length <= 12
+  );
 }

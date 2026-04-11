@@ -9,6 +9,11 @@ const templates = [
     description: "Fokuserar på jobb i Stockholm och Stockholms län.",
   },
   {
+    id: "uppsala",
+    label: "Uppsala",
+    description: "Visar jobb i Uppsala, Enköping, Knivsta och övriga delar av Uppsala län.",
+  },
+  {
     id: "hela-sverige",
     label: "Hela Sverige",
     description: "Visar alla relevanta läkarjobb i hela Sverige.",
@@ -18,6 +23,7 @@ const templates = [
 const categories = [
   "Underläkare",
   "BT-läkare",
+  "ST-läkare",
   "Legitimerad läkare",
   "Specialist",
 ];
@@ -44,7 +50,7 @@ const sortOptions = [
   { id: "title", label: "Titel A-Ö" },
 ];
 
-const storageKey = "doctor-jobs-radar-v4";
+const storageKey = "doctor-jobs-radar-v6";
 const unknownLocationLabels = new Set(["", "okänd ort", "okand ort", "unknown", "remote", "distans"]);
 
 const state = {
@@ -65,15 +71,27 @@ const state = {
   accounts: {},
   activeAccountId: "",
   activeAccountName: "",
+  selectedCommuteJobId: "",
+  commuteOrigin: "",
+  commuteDestination: "",
+  commuteDepartureAt: "",
+  commuteResults: [],
+  commuteStatusMessage: "",
 };
 
 const elements = {
   accountInput: document.querySelector("#accountInput"),
+  createAccountButton: document.querySelector("#createAccountButton"),
   loginButton: document.querySelector("#loginButton"),
   signoutButton: document.querySelector("#signoutButton"),
   accountBadge: document.querySelector("#accountBadge"),
   accountHint: document.querySelector("#accountHint"),
   accountPresets: document.querySelector("#accountPresets"),
+  notificationToggle: document.querySelector("#notificationToggle"),
+  notificationFrequencySelect: document.querySelector("#notificationFrequencySelect"),
+  notificationTemplateFilters: document.querySelector("#notificationTemplateFilters"),
+  notificationCategoryFilters: document.querySelector("#notificationCategoryFilters"),
+  notificationHint: document.querySelector("#notificationHint"),
   templateButtons: document.querySelector("#templateButtons"),
   pipelineTabs: document.querySelector("#pipelineTabs"),
   categoryFilters: document.querySelector("#categoryFilters"),
@@ -98,6 +116,14 @@ const elements = {
   generateLetterButton: document.querySelector("#generateLetterButton"),
   copyLetterButton: document.querySelector("#copyLetterButton"),
   generatorStatus: document.querySelector("#generatorStatus"),
+  commuteSelectedJob: document.querySelector("#commuteSelectedJob"),
+  commuteOriginInput: document.querySelector("#commuteOriginInput"),
+  commuteDestinationInput: document.querySelector("#commuteDestinationInput"),
+  commuteDepartureInput: document.querySelector("#commuteDepartureInput"),
+  useLocationButton: document.querySelector("#useLocationButton"),
+  calculateCommuteButton: document.querySelector("#calculateCommuteButton"),
+  commuteResultGrid: document.querySelector("#commuteResultGrid"),
+  commuteStatus: document.querySelector("#commuteStatus"),
 };
 
 function normalizeLookup(value = "") {
@@ -277,13 +303,54 @@ function getPublicationMeta(job) {
 }
 
 function normalizeAccountId(value = "") {
-  return value
-    .trim()
-    .toLowerCase()
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed.includes("@")) {
+    return trimmed.slice(0, 120);
+  }
+
+  return trimmed
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 40);
+}
+
+function createNotificationSettings() {
+  return {
+    enabled: false,
+    frequencyHours: 6,
+    templates: templates.map((template) => template.id),
+    categories: [...categories],
+    syncMode: "local",
+    syncedAt: null,
+    statusMessage: "",
+  };
+}
+
+function normalizeNotificationSettings(settings = {}, legacyAccount = {}) {
+  const frequencyCandidate = Number(
+    settings.frequencyHours ?? legacyAccount.notificationFrequencyHours ?? 6
+  );
+  const templatesCandidate = Array.isArray(settings.templates)
+    ? settings.templates
+    : templates.map((template) => template.id);
+  const categoriesCandidate = Array.isArray(settings.categories)
+    ? settings.categories
+    : [...categories];
+  const normalizedTemplates = templatesCandidate.filter((templateId) =>
+    templates.some((template) => template.id === templateId)
+  );
+  const normalizedCategories = categoriesCandidate.filter((category) => categories.includes(category));
+
+  return {
+    enabled: Boolean(settings.enabled ?? legacyAccount.notificationsEnabled ?? false),
+    frequencyHours: [6, 12, 24].includes(frequencyCandidate) ? frequencyCandidate : 6,
+    templates: normalizedTemplates.length ? normalizedTemplates : templates.map((template) => template.id),
+    categories: normalizedCategories.length ? normalizedCategories : [...categories],
+    syncMode: settings.syncMode ?? "local",
+    syncedAt: settings.syncedAt ?? null,
+    statusMessage: settings.statusMessage ?? "",
+  };
 }
 
 function createAccountProfile(accountName = "") {
@@ -291,8 +358,37 @@ function createAccountProfile(accountName = "") {
     name: accountName,
     bookmarks: [],
     statuses: {},
+    notificationSettings: createNotificationSettings(),
     lastUsedAt: new Date().toISOString(),
   };
+}
+
+function normalizeAccountProfile(accountId, account = {}) {
+  const base = createAccountProfile(account.name || accountId);
+  return {
+    ...base,
+    ...account,
+    name: account.name || base.name || accountId,
+    bookmarks: Array.isArray(account.bookmarks) ? account.bookmarks : [],
+    statuses: account.statuses && typeof account.statuses === "object" ? account.statuses : {},
+    notificationSettings: normalizeNotificationSettings(account.notificationSettings, account),
+  };
+}
+
+function ensureAccountProfile(accountId, accountName = "") {
+  state.accounts[accountId] = normalizeAccountProfile(
+    accountId,
+    state.accounts[accountId] ?? createAccountProfile(accountName)
+  );
+  return state.accounts[accountId];
+}
+
+function getActiveAccountProfile() {
+  return state.activeAccountId ? ensureAccountProfile(state.activeAccountId, state.activeAccountName) : null;
+}
+
+function getActiveNotificationSettings() {
+  return getActiveAccountProfile()?.notificationSettings ?? createNotificationSettings();
 }
 
 function saveActiveAccountState() {
@@ -301,7 +397,7 @@ function saveActiveAccountState() {
   }
 
   state.accounts[state.activeAccountId] = {
-    ...(state.accounts[state.activeAccountId] ?? createAccountProfile(state.activeAccountName)),
+    ...ensureAccountProfile(state.activeAccountId, state.activeAccountName),
     name: state.activeAccountName || state.activeAccountId,
     bookmarks: Array.from(state.bookmarks),
     statuses: state.statuses,
@@ -310,7 +406,7 @@ function saveActiveAccountState() {
 }
 
 function loadAccountState(accountId) {
-  const account = accountId ? state.accounts[accountId] : null;
+  const account = accountId ? ensureAccountProfile(accountId, state.activeAccountName) : null;
   state.bookmarks = new Set(account?.bookmarks ?? []);
   state.statuses = account?.statuses ?? {};
 }
@@ -327,9 +423,7 @@ function setActiveAccount(accountName) {
     return;
   }
 
-  if (!state.accounts[normalizedId]) {
-    state.accounts[normalizedId] = createAccountProfile(accountName.trim());
-  }
+  ensureAccountProfile(normalizedId, accountName.trim());
 
   state.activeAccountId = normalizedId;
   state.activeAccountName = state.accounts[normalizedId].name || accountName.trim() || normalizedId;
@@ -338,6 +432,19 @@ function setActiveAccount(accountName) {
 
 function isSignedIn() {
   return Boolean(state.activeAccountId);
+}
+
+function looksLikeEmail(value = "") {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
+}
+
+function buildNextMondayEight() {
+  const date = new Date();
+  const day = date.getDay();
+  const daysUntilMonday = ((8 - day) % 7) || 7;
+  date.setDate(date.getDate() + daysUntilMonday);
+  date.setHours(8, 0, 0, 0);
+  return date.toISOString().slice(0, 16);
 }
 
 function loadStoredState() {
@@ -351,19 +458,24 @@ function loadStoredState() {
     state.activePipeline = parsed.activePipeline ?? state.activePipeline;
     state.activeAgeFilter = parsed.activeAgeFilter ?? state.activeAgeFilter;
     state.activeSort = parsed.activeSort ?? state.activeSort;
-    state.accounts = parsed.accounts ?? {};
+    state.accounts = Object.fromEntries(
+      Object.entries(parsed.accounts ?? {}).map(([accountId, account]) => [
+        accountId,
+        normalizeAccountProfile(accountId, account),
+      ])
+    );
     if (
       Object.keys(state.accounts).length === 0 &&
       ((parsed.bookmarks ?? []).length || Object.keys(parsed.statuses ?? {}).length)
     ) {
-      state.accounts["lokal-profil"] = {
+      state.accounts["lokal-profil"] = normalizeAccountProfile("lokal-profil", {
         name: "lokal-profil",
         bookmarks: parsed.bookmarks ?? [],
         statuses: parsed.statuses ?? {},
         lastUsedAt: new Date().toISOString(),
-      };
-      state.activeAccountId = "lokal-profil";
-      state.activeAccountName = "lokal-profil";
+      });
+      state.activeAccountId = parsed.activeAccountId ?? "lokal-profil";
+      state.activeAccountName = parsed.activeAccountName ?? "lokal-profil";
     } else {
       state.activeAccountId = parsed.activeAccountId ?? "";
       state.activeAccountName =
@@ -378,6 +490,10 @@ function loadStoredState() {
     }
 
     state.activeSources = new Set(parsed.activeSources ?? []);
+    state.selectedCommuteJobId = parsed.selectedCommuteJobId ?? "";
+    state.commuteOrigin = parsed.commuteOrigin ?? "";
+    state.commuteDestination = parsed.commuteDestination ?? "";
+    state.commuteDepartureAt = parsed.commuteDepartureAt ?? buildNextMondayEight();
     loadAccountState(state.activeAccountId);
   } catch (error) {
     console.warn("Kunde inte läsa sparat tillstånd", error);
@@ -398,6 +514,10 @@ function persistState() {
       accounts: state.accounts,
       activeAccountId: state.activeAccountId,
       activeAccountName: state.activeAccountName,
+      selectedCommuteJobId: state.selectedCommuteJobId,
+      commuteOrigin: state.commuteOrigin,
+      commuteDestination: state.commuteDestination,
+      commuteDepartureAt: state.commuteDepartureAt,
     })
   );
 }
@@ -427,6 +547,8 @@ function buildSourceEntries(groupJobs) {
       roleLabel: job.roleLabel ?? job.category ?? "Läkare",
       category: job.category ?? "Legitimerad läkare",
       detailSnippet: job.detailSnippet ?? "",
+      employer: job.employer ?? "",
+      startInfo: job.startInfo ?? "",
       contacts: Array.isArray(job.contacts) ? job.contacts : [],
     };
   });
@@ -455,7 +577,8 @@ function buildSourceEntries(groupJobs) {
 
 function getCategorySpecificity(category = "") {
   const map = {
-    Specialist: 4,
+    Specialist: 5,
+    "ST-läkare": 4,
     "BT-läkare": 3,
     Underläkare: 2,
     "Legitimerad läkare": 1,
@@ -546,6 +669,15 @@ function buildMergedJob(groupKey, groupJobs) {
   const contacts = combineContacts(groupJobs);
   const roleSummary = pickRoleSummary(groupJobs, sourceEntries);
   const roleLabel = pickRoleLabel(groupJobs, sourceEntries, category);
+  const employer =
+    sourceEntries.find((entry) => entry.employer)?.employer ??
+    groupJobs.find((job) => job.employer)?.employer ??
+    sourceNames[0] ??
+    "Ej angivet";
+  const startInfo =
+    sourceEntries.find((entry) => entry.startInfo)?.startInfo ??
+    groupJobs.find((job) => job.startInfo)?.startInfo ??
+    "";
 
   return {
     id: `group:${groupKey}`,
@@ -555,7 +687,10 @@ function buildMergedJob(groupKey, groupJobs) {
     roleLabel,
     roleSummary,
     location,
+    employer,
+    startInfo,
     stockholmMatch: groupJobs.some((job) => job.stockholmMatch),
+    uppsalaMatch: groupJobs.some((job) => job.uppsalaMatch),
     sourceEntries,
     sourceIds,
     sourceNames,
@@ -578,6 +713,8 @@ function buildMergedJob(groupKey, groupJobs) {
       category,
       roleLabel,
       roleSummary,
+      employer,
+      startInfo,
       ...sourceNames,
       ...contacts.flatMap((contact) => [contact.name ?? "", contact.role ?? "", contact.email ?? ""]),
     ]
@@ -618,7 +755,15 @@ function getPipelineStatus(jobId) {
 }
 
 function matchesTemplate(job) {
-  return state.activeTemplate === "hela-sverige" ? true : job.stockholmMatch;
+  if (state.activeTemplate === "hela-sverige") {
+    return true;
+  }
+
+  if (state.activeTemplate === "uppsala") {
+    return job.uppsalaMatch;
+  }
+
+  return job.stockholmMatch;
 }
 
 function matchesPipeline(job) {
@@ -928,6 +1073,91 @@ function renderSourceList() {
   elements.sourceList.append(footer);
 }
 
+function renderNotificationButtons(container, items, activeValues, className, onToggle) {
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = "";
+
+  items.forEach((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `${className} ${activeValues.has(item.id) ? "is-active" : ""}`;
+    button.textContent = item.label;
+    button.disabled = !isSignedIn() || !looksLikeEmail(state.activeAccountName);
+    button.addEventListener("click", () => onToggle(item.id));
+    container.append(button);
+  });
+}
+
+async function syncNotificationSettings() {
+  const account = getActiveAccountProfile();
+  if (!account || !looksLikeEmail(state.activeAccountName)) {
+    return;
+  }
+
+  const notificationSettings = getActiveNotificationSettings();
+
+  try {
+    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      throw new Error("GitHub Pages ar statisk");
+    }
+
+    const response = await fetch("./api/subscriptions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        email: state.activeAccountName,
+        notifications: notificationSettings,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API-fel ${response.status}`);
+    }
+
+    const payload = await response.json();
+    account.notificationSettings = {
+      ...notificationSettings,
+      syncMode: "server",
+      syncedAt: payload.subscription?.updatedAt ?? new Date().toISOString(),
+      statusMessage:
+        payload.message ??
+        `E-postnotiser ar synkade for ${state.activeAccountName}. Avslutslank skickas med i varje mail.`,
+    };
+  } catch {
+    account.notificationSettings = {
+      ...notificationSettings,
+      syncMode: "local",
+      syncedAt: null,
+      statusMessage: notificationSettings.enabled
+        ? "Installningen ar sparad pa kontot har i webblasaren. For riktiga utskick behovs server/API eftersom GitHub Pages ar statisk."
+        : "Notiser ar avstangda for kontot just nu.",
+    };
+  }
+
+  persistState();
+  renderAccountPanel();
+}
+
+function updateNotificationSetting(mutator) {
+  const account = getActiveAccountProfile();
+  if (!account) {
+    return;
+  }
+
+  mutator(account.notificationSettings);
+  persistState();
+  renderAccountPanel();
+  if (looksLikeEmail(state.activeAccountName)) {
+    syncNotificationSettings();
+  }
+}
+
 function renderAccountPanel() {
   if (elements.accountInput) {
     elements.accountInput.value = state.activeAccountName;
@@ -941,12 +1171,75 @@ function renderAccountPanel() {
 
   if (elements.accountHint) {
     elements.accountHint.textContent = isSignedIn()
-      ? "Dina bokmärken och statusknappar sparas nu bara under det här kontot."
-      : "Logga in med bara namn för att spara Bokmärken, Sökt, Intervju, Avböjt och Ej intressant.";
+      ? "Dina bokmarken, knappstatusar och notifieringsval sparas nu under det har kontot."
+      : "Skapa konto eller logga in med e-post for att spara Bokmarken, Sokt, Intervju, Avbojt och Ej intressant.";
   }
 
   if (elements.signoutButton) {
     elements.signoutButton.disabled = !isSignedIn();
+  }
+
+  const notificationSettings = getActiveNotificationSettings();
+  const notificationsAvailable = isSignedIn() && looksLikeEmail(state.activeAccountName);
+
+  if (elements.notificationToggle) {
+    elements.notificationToggle.checked = notificationSettings.enabled;
+    elements.notificationToggle.disabled = !notificationsAvailable;
+  }
+
+  if (elements.notificationFrequencySelect) {
+    elements.notificationFrequencySelect.value = String(notificationSettings.frequencyHours);
+    elements.notificationFrequencySelect.disabled = !notificationsAvailable || !notificationSettings.enabled;
+  }
+
+  renderNotificationButtons(
+    elements.notificationTemplateFilters,
+    templates,
+    new Set(notificationSettings.templates),
+    "template-button",
+    (templateId) => {
+      updateNotificationSetting((settings) => {
+        const selected = new Set(settings.templates);
+        if (selected.has(templateId) && selected.size > 1) {
+          selected.delete(templateId);
+        } else {
+          selected.add(templateId);
+        }
+        settings.templates = Array.from(selected);
+      });
+    }
+  );
+
+  renderNotificationButtons(
+    elements.notificationCategoryFilters,
+    categories.map((category) => ({ id: category, label: category })),
+    new Set(notificationSettings.categories),
+    "category-pill",
+    (category) => {
+      updateNotificationSetting((settings) => {
+        const selected = new Set(settings.categories);
+        if (selected.has(category) && selected.size > 1) {
+          selected.delete(category);
+        } else {
+          selected.add(category);
+        }
+        settings.categories = Array.from(selected);
+      });
+    }
+  );
+
+  if (elements.notificationHint) {
+    if (!isSignedIn()) {
+      elements.notificationHint.textContent = "Logga in med e-post for att spara notifieringsval och forbereda mailutskick.";
+    } else if (!looksLikeEmail(state.activeAccountName)) {
+      elements.notificationHint.textContent = "Byt till en e-postadress om du vill koppla kontot till mailnotiser.";
+    } else if (notificationSettings.statusMessage) {
+      elements.notificationHint.textContent = notificationSettings.statusMessage;
+    } else if (notificationSettings.enabled) {
+      elements.notificationHint.textContent = `Mail ar aktiverade var ${notificationSettings.frequencyHours}:e timme for ${state.activeAccountName}.`;
+    } else {
+      elements.notificationHint.textContent = "Aktivera e-postnotiser for att fa mail nar nya matchande jobb publiceras.";
+    }
   }
 
   if (!elements.accountPresets) {
@@ -982,7 +1275,8 @@ function renderSummary() {
   const summaryItems = [
     ["Live annonser", groupedJobs.length],
     ["Stockholm", groupedJobs.filter((job) => job.stockholmMatch).length],
-    ["Hela Sverige", groupedJobs.filter((job) => !job.stockholmMatch).length],
+    ["Uppsala", groupedJobs.filter((job) => job.uppsalaMatch).length],
+    ["Övriga Sverige", groupedJobs.filter((job) => !job.stockholmMatch && !job.uppsalaMatch).length],
     ["Sammanslagna dubletter", groupedJobs.filter((job) => job.isDuplicate).length],
     ["Bokmärken", statusCounts.bookmarks],
     ["Sökt", statusCounts.applied],
@@ -1049,6 +1343,171 @@ function createContactCard(contact) {
   return wrapper;
 }
 
+function findGroupedJobById(jobId = "") {
+  return getGroupedJobs().find((job) => job.id === jobId) ?? null;
+}
+
+function buildCommuteDestinationLabel(job) {
+  if (!job) {
+    return "";
+  }
+
+  return [job.employer && job.employer !== "Ej angivet" ? job.employer : "", job.location || "", "Sverige"]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function buildGoogleMapsLink({ origin, destination, modeId }) {
+  const url = new URL("https://www.google.com/maps/dir/");
+  url.searchParams.set("api", "1");
+  url.searchParams.set("origin", origin);
+  url.searchParams.set("destination", destination);
+
+  if (modeId === "driving") {
+    url.searchParams.set("travelmode", "driving");
+  } else if (modeId === "bicycling") {
+    url.searchParams.set("travelmode", "bicycling");
+  } else {
+    url.searchParams.set("travelmode", "transit");
+  }
+
+  return url.toString();
+}
+
+function buildFallbackCommuteResults(origin, destination) {
+  const definitions = [
+    {
+      id: "driving",
+      label: "Bil",
+      pill: "Bil",
+      note: "Google Maps oppnas med biltrafik och aktuell vardagstrafik for den valda tiden.",
+    },
+    {
+      id: "bus",
+      label: "Buss",
+      pill: "Kollektivt",
+      note: "Google Maps oppnas i kollektivtrafiklage. Buss och ovriga byten raknas dar.",
+    },
+    {
+      id: "rail",
+      label: "Tag",
+      pill: "Kollektivt",
+      note: "Google Maps oppnas i kollektivtrafiklage. Tag och ovriga byten raknas dar.",
+    },
+    {
+      id: "bicycling",
+      label: "Cykel",
+      pill: "Cykel",
+      note: "Google Maps oppnas i cykellage sa att du snabbt kan jamfora med andra alternativ.",
+    },
+  ];
+
+  return definitions.map((definition) => ({
+    id: definition.id,
+    label: definition.label,
+    pill: definition.pill,
+    durationText: "Beraknas i Google Maps",
+    distanceText: "Oppna lank for exakt restid",
+    note: definition.note,
+    link: buildGoogleMapsLink({
+      origin,
+      destination,
+      modeId: definition.id,
+    }),
+    visualWidth: 34,
+  }));
+}
+
+function createCommuteResultCard(result) {
+  const card = document.createElement("article");
+  card.className = "commute-result-card";
+  card.innerHTML = `
+    <div class="commute-result-head">
+      <strong>${result.label}</strong>
+      <span class="commute-mode-pill">${result.pill}</span>
+    </div>
+    <div class="commute-result-stats">
+      <div class="commute-stat">
+        <span>Restid</span>
+        <strong>${result.durationText}</strong>
+      </div>
+      <div class="commute-stat">
+        <span>Distans</span>
+        <strong>${result.distanceText}</strong>
+      </div>
+    </div>
+    <div class="commute-visual"><span style="width: ${result.visualWidth ?? 34}%"></span></div>
+    <p>${result.note}</p>
+  `;
+
+  const link = document.createElement("a");
+  link.className = "job-link";
+  link.href = result.link;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = "Oppna i Google Maps";
+  card.append(link);
+
+  return card;
+}
+
+function renderCommutePanel() {
+  const selectedJob = findGroupedJobById(state.selectedCommuteJobId);
+
+  if (elements.commuteSelectedJob) {
+    elements.commuteSelectedJob.textContent = selectedJob
+      ? `${selectedJob.title} · ${selectedJob.employer} · ${selectedJob.location}`
+      : 'Ingen annons vald annu. Tryck "Pendla hit" pa ett jobbkort for att fylla i destinationen automatiskt.';
+  }
+
+  if (elements.commuteOriginInput) {
+    elements.commuteOriginInput.value = state.commuteOrigin;
+  }
+
+  if (elements.commuteDestinationInput) {
+    elements.commuteDestinationInput.value = state.commuteDestination;
+  }
+
+  if (elements.commuteDepartureInput) {
+    elements.commuteDepartureInput.value = state.commuteDepartureAt || buildNextMondayEight();
+  }
+
+  if (elements.commuteStatus) {
+    elements.commuteStatus.textContent =
+      state.commuteStatusMessage ||
+      "Mandag klockan 08:00 ar forifyllt som standard for att spegla vardagstrafik.";
+  }
+
+  if (elements.commuteResultGrid) {
+    elements.commuteResultGrid.innerHTML = "";
+
+    if (!state.commuteResults.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent =
+        "Valj en annons och rakna pendlingen for att fa en jamforelse mellan olika transportsatt.";
+      elements.commuteResultGrid.append(empty);
+      return;
+    }
+
+    state.commuteResults.forEach((result) => {
+      elements.commuteResultGrid.append(createCommuteResultCard(result));
+    });
+  }
+}
+
+function setSelectedCommuteJob(job, { scrollIntoView = false } = {}) {
+  state.selectedCommuteJobId = job.id;
+  state.commuteDestination = buildCommuteDestinationLabel(job);
+  state.commuteStatusMessage = `${job.title} vald for pendlingsjamforelse. Justera startadress och tid om du vill.`;
+  persistState();
+  renderCommutePanel();
+
+  if (scrollIntoView && elements.commuteSelectedJob) {
+    elements.commuteSelectedJob.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
 function createStatusButton(job, statusId, label) {
   const button = document.createElement("button");
   button.type = "button";
@@ -1082,9 +1541,11 @@ function createJobCard(job) {
   const category = fragment.querySelector(".job-category");
   const title = fragment.querySelector(".job-title");
   const location = fragment.querySelector(".job-location");
+  const employer = fragment.querySelector(".job-employer");
   const source = fragment.querySelector(".job-source");
   const published = fragment.querySelector(".job-published");
   const seekingRole = fragment.querySelector(".job-seeking-role");
+  const startInfo = fragment.querySelector(".job-start-info");
   const link = fragment.querySelector(".job-link");
   const linkCount = fragment.querySelector(".job-link-count");
   const linksList = fragment.querySelector(".job-links-list");
@@ -1098,10 +1559,12 @@ function createJobCard(job) {
   title.innerHTML = `<a class="job-title-link" href="${job.link}" target="_blank" rel="noreferrer">${job.title}</a>`;
   roleSummary.textContent = job.roleSummary;
   location.textContent = job.location;
+  employer.textContent = job.employer || "Ej angivet";
   source.textContent =
     job.sourceEntries.length === 1 ? job.sourceEntries[0].sourceName : `${job.sourceEntries.length} källor`;
   published.textContent = job.oldestPublicationLabel;
   seekingRole.textContent = job.roleLabel;
+  startInfo.textContent = job.startInfo || "Ej angivet";
   link.href = job.link;
   link.textContent = "Öppna första träffen";
   linkCount.textContent = `${job.sourceEntries.length} länk${job.sourceEntries.length === 1 ? "" : "ar"}`;
@@ -1174,7 +1637,16 @@ function createJobCard(job) {
     notes.append(note);
   }
 
+  const commuteButton = document.createElement("button");
+  commuteButton.type = "button";
+  commuteButton.className = "ghost-button";
+  commuteButton.textContent = "Pendla hit";
+  commuteButton.addEventListener("click", () => {
+    setSelectedCommuteJob(job, { scrollIntoView: true });
+  });
+
   actions.append(
+    commuteButton,
     createStatusButton(job, "active", "Aktiv"),
     createStatusButton(job, "applied", "Sökt"),
     createStatusButton(job, "interview", "Intervju"),
@@ -1191,7 +1663,7 @@ function updateBoardHeading(filteredJobs) {
   const currentSort = sortOptions.find((option) => option.id === state.activeSort);
 
   elements.boardTitle.textContent = `${currentPipeline.label} · ${currentTemplate.label}`;
-  elements.boardSubTitle.textContent = `${filteredJobs.length} sammanslagna annonser efter filter. Sortering: ${currentSort.label.toLowerCase()}. Rollen bedöms från annonsens titel och brödtext, och varje kort visar även chef- eller kontaktuppgifter när de har kunnat hittas.`;
+  elements.boardSubTitle.textContent = `${filteredJobs.length} sammanslagna annonser efter filter. Sortering: ${currentSort.label.toLowerCase()}. Rollen bedöms från annonsens titel och brödtext, och varje kort visar även firma, startinfo och chef- eller kontaktuppgifter när de har kunnat hittas.`;
 }
 
 function renderBoards() {
@@ -1250,6 +1722,59 @@ function updateRefreshStatus(messageOverride = null) {
 
   lines.push("Knappen försöker live-refresh via server, annars laddas senaste publicerade GitHub-snapshot.");
   elements.refreshStatus.textContent = lines.join(" · ");
+}
+
+async function calculateCommute() {
+  state.commuteOrigin = elements.commuteOriginInput?.value.trim() ?? "";
+  state.commuteDestination = elements.commuteDestinationInput?.value.trim() ?? "";
+  state.commuteDepartureAt = elements.commuteDepartureInput?.value || buildNextMondayEight();
+
+  if (!state.commuteOrigin || !state.commuteDestination) {
+    state.commuteResults = [];
+    state.commuteStatusMessage = "Fyll i både startadress och destination innan du raknar pendlingen.";
+    persistState();
+    renderCommutePanel();
+    return;
+  }
+
+  state.commuteStatusMessage = "Raknar pendling och bygger Google Maps-lankar...";
+  renderCommutePanel();
+
+  try {
+    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      throw new Error("GitHub Pages fallback");
+    }
+
+    const response = await fetch("./api/commute", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        origin: state.commuteOrigin,
+        destination: state.commuteDestination,
+        departureAt: state.commuteDepartureAt,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API-fel ${response.status}`);
+    }
+
+    const payload = await response.json();
+    state.commuteResults = payload.results ?? [];
+    state.commuteStatusMessage =
+      payload.message ??
+      "Restider hamtade. Jamfor alternativen och oppna sedan den rutt som passar dig bast.";
+  } catch {
+    state.commuteResults = buildFallbackCommuteResults(state.commuteOrigin, state.commuteDestination);
+    state.commuteStatusMessage =
+      "Google Maps-lankar ar klara. Exakta restider kraver server med Google Maps-nyckel; annars beraknas de nar du oppnar lanken.";
+  }
+
+  persistState();
+  renderCommutePanel();
 }
 
 async function readStaticSnapshot() {
@@ -1392,6 +1917,7 @@ function render() {
   renderSourceList();
   renderSummary();
   renderBoards();
+  renderCommutePanel();
   updateRefreshStatus();
 
   if (elements.sortSelect) {
@@ -1454,19 +1980,34 @@ elements.sortSelect?.addEventListener("change", (event) => {
   render();
 });
 
-elements.loginButton?.addEventListener("click", () => {
+function submitAccountFromInput({ create = false } = {}) {
   const candidate = elements.accountInput?.value ?? "";
-  const normalized = normalizeAccountId(candidate);
-  if (!normalized) {
+  if (!looksLikeEmail(candidate)) {
     if (elements.accountHint) {
-      elements.accountHint.textContent = "Skriv ett kontonamn med bokstäver eller siffror först.";
+      elements.accountHint.textContent = "Skriv en giltig e-postadress for att skapa eller logga in pa kontot.";
     }
-    return;
+    return false;
   }
 
   setActiveAccount(candidate);
+  const account = getActiveAccountProfile();
+  if (create && account) {
+    account.name = candidate.trim().toLowerCase();
+    account.notificationSettings.statusMessage =
+      "Kontot ar skapat. Du kan nu spara jobbstatus och aktivera e-postnotiser for just den har adressen.";
+  }
   persistState();
   render();
+  syncNotificationSettings();
+  return true;
+}
+
+elements.createAccountButton?.addEventListener("click", () => {
+  submitAccountFromInput({ create: true });
+});
+
+elements.loginButton?.addEventListener("click", () => {
+  submitAccountFromInput();
 });
 
 elements.accountInput?.addEventListener("keydown", (event) => {
@@ -1480,6 +2021,18 @@ elements.signoutButton?.addEventListener("click", () => {
   setActiveAccount("");
   persistState();
   render();
+});
+
+elements.notificationToggle?.addEventListener("change", (event) => {
+  updateNotificationSetting((settings) => {
+    settings.enabled = event.target.checked;
+  });
+});
+
+elements.notificationFrequencySelect?.addEventListener("change", (event) => {
+  updateNotificationSetting((settings) => {
+    settings.frequencyHours = Number(event.target.value);
+  });
 });
 
 elements.generateLetterButton?.addEventListener("click", () => {
@@ -1517,6 +2070,54 @@ elements.copyLetterButton?.addEventListener("click", async () => {
         "Kunde inte kopiera automatiskt. Markera brevet manuellt och kopiera det.";
     }
   }
+});
+
+elements.useLocationButton?.addEventListener("click", () => {
+  if (!navigator.geolocation) {
+    state.commuteStatusMessage = "Din webblasare stoder inte automatisk platsdelning.";
+    renderCommutePanel();
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      state.commuteOrigin = `${position.coords.latitude.toFixed(5)}, ${position.coords.longitude.toFixed(5)}`;
+      if (elements.commuteOriginInput) {
+        elements.commuteOriginInput.value = state.commuteOrigin;
+      }
+      state.commuteStatusMessage = "Din nuvarande plats ar ifylld som koordinater. Du kan justera adressen manuellt om du vill.";
+      persistState();
+      renderCommutePanel();
+    },
+    () => {
+      state.commuteStatusMessage = "Kunde inte hamta din plats. Skriv in adressen manuellt i stallet.";
+      renderCommutePanel();
+    },
+    {
+      enableHighAccuracy: true,
+      maximumAge: 5 * 60 * 1000,
+      timeout: 15000,
+    }
+  );
+});
+
+elements.calculateCommuteButton?.addEventListener("click", () => {
+  calculateCommute();
+});
+
+elements.commuteOriginInput?.addEventListener("input", (event) => {
+  state.commuteOrigin = event.target.value;
+  persistState();
+});
+
+elements.commuteDestinationInput?.addEventListener("input", (event) => {
+  state.commuteDestination = event.target.value;
+  persistState();
+});
+
+elements.commuteDepartureInput?.addEventListener("change", (event) => {
+  state.commuteDepartureAt = event.target.value;
+  persistState();
 });
 
 loadStoredState();
