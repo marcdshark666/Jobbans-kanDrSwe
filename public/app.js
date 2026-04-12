@@ -147,6 +147,12 @@ function normalizeLookup(value = "") {
     .trim();
 }
 
+function containsExcludedNonDoctorSignals(value = "") {
+  return /sjukskotersk|underskotersk|skotersk|barnmorsk|omvardnad|nurse|nursing/i.test(
+    normalizeLookup(value)
+  );
+}
+
 function isUnknownLocation(location = "") {
   return unknownLocationLabels.has(normalizeLookup(location));
 }
@@ -267,14 +273,14 @@ function parsePublicationValue(value, fallbackTimestamp = null) {
 function buildPublicationLabel(rawValue, publicationDate, fallbackDate, isVerified) {
   if (rawValue && isVerified && !isRelativePublicationValue(rawValue)) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue.trim())) {
-      return formatDateOnly(publicationDate);
+      return `Publicerad ${formatDateOnly(publicationDate)}`;
     }
 
-    return formatTimestamp(publicationDate);
+    return `Publicerad ${formatTimestamp(publicationDate)}`;
   }
 
   if (rawValue && publicationDate && isRelativePublicationValue(rawValue)) {
-    return `Ca ${formatTimestamp(publicationDate)} · ${rawValue}`;
+    return `Publicerad cirka ${formatTimestamp(publicationDate)} · ${rawValue}`;
   }
 
   if (rawValue && !isVerified) {
@@ -282,7 +288,7 @@ function buildPublicationLabel(rawValue, publicationDate, fallbackDate, isVerifi
   }
 
   if (publicationDate) {
-    return formatTimestamp(publicationDate);
+    return `Publicerad ${formatTimestamp(publicationDate)}`;
   }
 
   if (fallbackDate) {
@@ -970,12 +976,18 @@ function pickBestLocation(groupJobs, sourceEntries) {
 
 function buildMergedJob(groupKey, groupJobs) {
   const sourceEntries = buildSourceEntries(groupJobs);
-  const primaryEntry = sourceEntries[0] ?? null;
+  const primaryEntry = sourceEntries.find((entry) => entry.publicationDate) ?? sourceEntries[0] ?? null;
   const sourceIds = Array.from(new Set(sourceEntries.map((entry) => entry.sourceId)));
   const sourceNames = Array.from(new Set(sourceEntries.map((entry) => entry.sourceName)));
   const category = pickPreferredCategory(groupJobs) ?? "Legitimerad läkare";
-  const oldestPublicationDate = sourceEntries.find((entry) => entry.referenceDate)?.referenceDate ?? null;
-  const latestPublicationDate = [...sourceEntries].reverse().find((entry) => entry.referenceDate)?.referenceDate ?? null;
+  const datedPublicationEntries = sourceEntries.filter((entry) => entry.publicationDate);
+  const datedReferenceEntries = sourceEntries.filter((entry) => entry.referenceDate);
+  const oldestPublicationDate =
+    datedPublicationEntries[0]?.publicationDate ?? datedReferenceEntries[0]?.referenceDate ?? null;
+  const latestPublicationDate =
+    [...datedPublicationEntries].reverse()[0]?.publicationDate ??
+    [...datedReferenceEntries].reverse()[0]?.referenceDate ??
+    null;
   const firstSeenAt =
     groupJobs
       .map((job) => toDate(job.firstSeenAt))
@@ -1065,9 +1077,24 @@ function getGroupedJobs() {
     groupedJobs.get(groupKey).push(job);
   });
 
-  return Array.from(groupedJobs.entries()).map(([groupKey, groupJobs]) =>
-    buildMergedJob(groupKey, groupJobs)
-  );
+  return Array.from(groupedJobs.entries())
+    .map(([groupKey, groupJobs]) => buildMergedJob(groupKey, groupJobs))
+    .filter((job) => {
+      const combinedSignals = [
+        job.title,
+        job.category,
+        job.roleLabel,
+        job.roleSummary,
+        ...job.sourceEntries.flatMap((entry) => [
+          entry.title,
+          entry.roleLabel,
+          entry.roleSummary,
+          entry.detailSnippet,
+        ]),
+      ].join(" ");
+
+      return !containsExcludedNonDoctorSignals(combinedSignals);
+    });
 }
 
 function getPipelineStatus(jobId) {
@@ -2349,7 +2376,7 @@ function updateBoardHeading(filteredJobs) {
     : "Alla omraden";
 
   elements.boardTitle.textContent = `${currentPipeline.label} · ${templateLabel}`;
-  elements.boardSubTitle.textContent = `${filteredJobs.length} sammanslagna annonser efter filter. Sortering: ${currentSort.label.toLowerCase()}. Rollen bedöms från annonsens titel och brödtext, och varje kort visar även firma, startinfo och chef- eller kontaktuppgifter när de har kunnat hittas.`;
+  elements.boardSubTitle.textContent = `${filteredJobs.length} sammanslagna annonser efter filter. Sortering: ${currentSort.label.toLowerCase()}, med publiceringsdatum prioriterat nar det finns. Rollen bedoms fran annonsens titel och brodtext, och endast lakarjobb visas.`;
 }
 
 function renderBoards() {

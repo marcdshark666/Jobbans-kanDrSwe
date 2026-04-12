@@ -111,6 +111,7 @@ export function classifyJob(title = "", context = "") {
   const combinedText = normalizeForCompare(`${title} ${context}`);
   if (
     containsExcludedNonDoctorRole(title) ||
+    containsExcludedNonDoctorRole(combinedText) ||
     combinedText.includes("tandlakare") ||
     combinedText.includes("odontolog")
   ) {
@@ -216,6 +217,10 @@ function matchesUnderlakareRole(text = "") {
 }
 
 function matchesSpecialistRole(text = "") {
+  if (containsExcludedNonDoctorRole(text)) {
+    return false;
+  }
+
   return (
     text.includes("spec lakare") ||
     text.includes("specialistlakare") ||
