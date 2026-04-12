@@ -136,7 +136,16 @@ const elements = {
   calculateCommuteButton: document.querySelector("#calculateCommuteButton"),
   commuteResultGrid: document.querySelector("#commuteResultGrid"),
   commuteStatus: document.querySelector("#commuteStatus"),
+  jobJumpControls: null,
+  jobJumpUpButton: null,
+  jobJumpDownButton: null,
 };
+
+const JOB_JUMP_SCROLL_OFFSET = 18;
+const JOB_JUMP_THRESHOLD = 44;
+const JOB_JUMP_TOP_TOLERANCE = 28;
+
+let jobJumpWakeTimeout = null;
 
 function normalizeLookup(value = "") {
   return value
@@ -151,6 +160,150 @@ function containsExcludedNonDoctorSignals(value = "") {
   return /sjukskotersk|underskotersk|skotersk|barnmorsk|omvardnad|nurse|nursing/i.test(
     normalizeLookup(value)
   );
+}
+
+function ensureJobJumpControls() {
+  if (elements.jobJumpControls) {
+    return;
+  }
+
+  const controls = document.createElement("div");
+  controls.className = "job-jump-controls";
+  controls.setAttribute("aria-label", "Snabbnavigering mellan annonser");
+
+  const upButton = document.createElement("button");
+  upButton.type = "button";
+  upButton.className = "job-jump-button";
+  upButton.setAttribute("aria-label", "Hoppa till foregaende annons");
+  upButton.title = "Foregaende annons";
+  upButton.innerHTML = '<span aria-hidden="true">&#8593;</span>';
+
+  const downButton = document.createElement("button");
+  downButton.type = "button";
+  downButton.className = "job-jump-button";
+  downButton.setAttribute("aria-label", "Hoppa till nasta annons");
+  downButton.title = "Nasta annons";
+  downButton.innerHTML = '<span aria-hidden="true">&#8595;</span>';
+
+  upButton.addEventListener("click", () => {
+    wakeJobJumpControls();
+    jumpBetweenJobCards(-1);
+  });
+
+  downButton.addEventListener("click", () => {
+    wakeJobJumpControls();
+    jumpBetweenJobCards(1);
+  });
+
+  controls.addEventListener("pointerenter", wakeJobJumpControls);
+  controls.addEventListener("focusin", wakeJobJumpControls);
+
+  controls.append(upButton, downButton);
+  document.body.append(controls);
+
+  elements.jobJumpControls = controls;
+  elements.jobJumpUpButton = upButton;
+  elements.jobJumpDownButton = downButton;
+}
+
+function wakeJobJumpControls() {
+  if (!elements.jobJumpControls) {
+    return;
+  }
+
+  elements.jobJumpControls.classList.add("is-awake");
+  window.clearTimeout(jobJumpWakeTimeout);
+  jobJumpWakeTimeout = window.setTimeout(() => {
+    elements.jobJumpControls?.classList.remove("is-awake");
+  }, 1400);
+}
+
+function getRenderedJobCards() {
+  return Array.from(document.querySelectorAll(".job-card")).filter(
+    (card) => card instanceof HTMLElement && card.getClientRects().length
+  );
+}
+
+function getJobJumpAnchor(cards = getRenderedJobCards()) {
+  if (!cards.length) {
+    return {
+      cards,
+      currentIndex: -1,
+      currentTop: Number.POSITIVE_INFINITY,
+    };
+  }
+
+  const nextIndex = cards.findIndex((card) => card.getBoundingClientRect().top > JOB_JUMP_THRESHOLD);
+  const currentIndex = nextIndex === -1 ? cards.length - 1 : Math.max(0, nextIndex - 1);
+
+  return {
+    cards,
+    currentIndex,
+    currentTop: cards[currentIndex].getBoundingClientRect().top,
+  };
+}
+
+function scrollToJobCard(card) {
+  if (!card) {
+    return;
+  }
+
+  const targetTop = Math.max(0, window.scrollY + card.getBoundingClientRect().top - JOB_JUMP_SCROLL_OFFSET);
+  window.scrollTo({
+    top: targetTop,
+    behavior: "smooth",
+  });
+}
+
+function jumpBetweenJobCards(direction) {
+  const cards = getRenderedJobCards();
+  if (!cards.length) {
+    return;
+  }
+
+  const { currentIndex, currentTop } = getJobJumpAnchor(cards);
+  if (currentIndex < 0) {
+    return;
+  }
+
+  let targetIndex = currentIndex;
+
+  if (direction < 0) {
+    targetIndex =
+      currentTop < JOB_JUMP_THRESHOLD - JOB_JUMP_TOP_TOLERANCE ? currentIndex : Math.max(0, currentIndex - 1);
+  } else if (cards[0].getBoundingClientRect().top > JOB_JUMP_THRESHOLD) {
+    targetIndex = 0;
+  } else {
+    targetIndex = Math.min(cards.length - 1, currentIndex + 1);
+  }
+
+  scrollToJobCard(cards[targetIndex]);
+}
+
+function updateJobJumpControls() {
+  if (!elements.jobJumpControls || !elements.jobJumpUpButton || !elements.jobJumpDownButton) {
+    return;
+  }
+
+  const cards = getRenderedJobCards();
+  if (!cards.length) {
+    elements.jobJumpControls.hidden = true;
+    elements.jobJumpUpButton.disabled = true;
+    elements.jobJumpDownButton.disabled = true;
+    return;
+  }
+
+  elements.jobJumpControls.hidden = false;
+
+  const { currentIndex, currentTop } = getJobJumpAnchor(cards);
+  const firstCardTop = cards[0].getBoundingClientRect().top;
+  const hasUpTarget =
+    currentIndex > 0 || currentTop < JOB_JUMP_THRESHOLD - JOB_JUMP_TOP_TOLERANCE;
+  const hasDownTarget =
+    firstCardTop > JOB_JUMP_THRESHOLD || currentIndex < cards.length - 1;
+
+  elements.jobJumpUpButton.disabled = !hasUpTarget;
+  elements.jobJumpDownButton.disabled = !hasDownTarget;
 }
 
 function isUnknownLocation(location = "") {
@@ -2247,6 +2400,7 @@ function createStatusButton(job, statusId, label) {
 
 function createJobCard(job) {
   const fragment = elements.jobCardTemplate.content.cloneNode(true);
+  const card = fragment.querySelector(".job-card");
   const bookmarkButton = fragment.querySelector(".bookmark-button");
   const category = fragment.querySelector(".job-category");
   const title = fragment.querySelector(".job-title");
@@ -2264,6 +2418,10 @@ function createJobCard(job) {
   const contactsList = fragment.querySelector(".job-contacts-list");
   const notes = fragment.querySelector(".job-notes");
   const actions = fragment.querySelector(".job-actions");
+
+  if (card) {
+    card.dataset.jobId = job.id;
+  }
 
   category.textContent = job.category;
   title.innerHTML = `<a class="job-title-link" href="${job.link}" target="_blank" rel="noreferrer">${job.title}</a>`;
@@ -2630,6 +2788,8 @@ function render() {
   renderSourceList();
   renderSummary();
   renderBoards();
+  ensureJobJumpControls();
+  updateJobJumpControls();
   renderCommutePanel();
   updateRefreshStatus();
 
@@ -2842,6 +3002,18 @@ elements.commuteDepartureInput?.addEventListener("change", (event) => {
 loadStoredState();
 render();
 await loadJobs();
+
+window.addEventListener(
+  "scroll",
+  () => {
+    updateJobJumpControls();
+  },
+  { passive: true }
+);
+
+window.addEventListener("resize", () => {
+  updateJobJumpControls();
+});
 
 window.setInterval(() => {
   loadJobs();

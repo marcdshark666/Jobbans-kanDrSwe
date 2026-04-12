@@ -1142,6 +1142,67 @@ textarea {
   color: #f3fbfb;
 }
 
+.job-jump-controls {
+  position: fixed;
+  right: 18px;
+  top: 50%;
+  z-index: 45;
+  display: grid;
+  gap: 10px;
+  transform: translateY(-50%);
+  opacity: 0.2;
+  transition: opacity 180ms ease;
+}
+
+.job-jump-controls:hover,
+.job-jump-controls:focus-within,
+.job-jump-controls.is-awake {
+  opacity: 0.8;
+}
+
+.job-jump-button {
+  width: 52px;
+  height: 52px;
+  cursor: pointer;
+  border: 1px solid rgba(30, 203, 225, 0.24);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(9, 26, 34, 0.94), rgba(7, 18, 24, 0.88)),
+    rgba(7, 18, 24, 0.88);
+  color: var(--ink);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  transition:
+    transform 160ms ease,
+    opacity 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.job-jump-button span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.job-jump-button:hover,
+.job-jump-button:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(123, 241, 255, 0.5);
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.3);
+}
+
+.job-jump-button:disabled {
+  cursor: default;
+  transform: none;
+  opacity: 0.38;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
 .empty-state {
   padding: 28px;
   color: var(--muted);
@@ -1221,5 +1282,17 @@ textarea {
   .category-section-head {
     align-items: start;
     flex-direction: column;
+  }
+
+  .job-jump-controls {
+    right: 12px;
+    top: auto;
+    bottom: 18px;
+    transform: none;
+  }
+
+  .job-jump-button {
+    width: 48px;
+    height: 48px;
   }
 }
