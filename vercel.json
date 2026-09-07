@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm install",
+  "buildCommand": "node scripts/build-static.js",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60,
+      "memory": 1024,
+      "includeFiles": "data/jobs-cache.json"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/unsubscribe", "destination": "/api/index" }
+  ],
+  "headers": [
+    {
+      "source": "/data/jobs-cache.json",
+      "headers": [{ "key": "cache-control", "value": "public, max-age=0, s-maxage=300" }]
+    }
+  ]
+}

@@ -2,6 +2,26 @@
 const actionsUrl = `${repoUrl}/actions`;
 const dataUrl = "./data/jobs-cache.json";
 
+// Rena statiska värdar (GitHub Pages, file://) saknar backend och läser cachen.
+// Allt annat - localhost och Vercel - har API:t bakom sig.
+const staticOnlyHosts = ["github.io"];
+
+function hasBackendApi() {
+  const { hostname, protocol } = window.location;
+
+  if (protocol === "file:") {
+    return false;
+  }
+
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return true;
+  }
+
+  return !staticOnlyHosts.some(
+    (host) => hostname === host || hostname.endsWith(`.${host}`)
+  );
+}
+
 const templates = [
   {
     id: "stockholm",
@@ -1602,7 +1622,7 @@ async function hydrateNotificationSettingsFromServer() {
   }
 
   try {
-    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    if (!hasBackendApi()) {
       return;
     }
 
@@ -1670,7 +1690,7 @@ async function syncNotificationSettings({ sendWelcome = true } = {}) {
   });
 
   try {
-    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    if (!hasBackendApi()) {
       throw new Error("GitHub Pages ar statisk");
     }
 
@@ -1752,7 +1772,7 @@ async function sendNotificationTestEmail() {
   }
 
   try {
-    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    if (!hasBackendApi()) {
       throw new Error("GitHub Pages ar statisk");
     }
 
@@ -1807,7 +1827,7 @@ async function disconnectNotificationEmail() {
   const notificationEmail = getNotificationEmail(notificationSettings);
 
   try {
-    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    if (!hasBackendApi()) {
       throw new Error("GitHub Pages ar statisk");
     }
 
@@ -2612,7 +2632,7 @@ async function calculateCommute() {
   renderCommutePanel();
 
   try {
-    if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    if (!hasBackendApi()) {
       throw new Error("GitHub Pages fallback");
     }
 
@@ -2661,7 +2681,7 @@ async function readStaticSnapshot() {
 }
 
 async function readLivePayload({ manual = false } = {}) {
-  if (!["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+  if (!hasBackendApi()) {
     throw new Error("Ingen lokal server");
   }
 
@@ -2677,7 +2697,15 @@ async function readLivePayload({ manual = false } = {}) {
     throw new Error(`API-fel ${response.status}`);
   }
 
-  return response.json();
+  const payload = await response.json();
+
+  // Tom svarslista betyder att servern inte hunnit fylla sin cache - då är den
+  // statiska ögonblicksbilden bättre än en tom sida.
+  if (!Array.isArray(payload.jobs) || payload.jobs.length === 0) {
+    throw new Error("Tomt svar från API:t");
+  }
+
+  return payload;
 }
 
 function splitIntoSentences(value = "") {

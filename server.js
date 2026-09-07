@@ -2,6 +2,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { aggregateJobs, refreshIntervalMs } from "./src/lib/job-sources.js";
@@ -14,6 +15,15 @@ const port = Number(process.env.PORT || 3000);
 const dataDirectory = path.join(__dirname, "data");
 const cacheFile = path.join(dataDirectory, "jobs-cache.json");
 const subscribersFile = path.join(dataDirectory, "subscribers.local.json");
+
+// Vercel och andra serverless-plattformar har skrivskyddat filsystem utanför /tmp.
+// Paketerade filer läses från projektmappen, allt som skrivs hamnar i /tmp.
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const writableDataDirectory = isServerless
+  ? path.join(os.tmpdir(), "jobbans-data")
+  : dataDirectory;
+const writableCacheFile = path.join(writableDataDirectory, "jobs-cache.json");
+const writableSubscribersFile = path.join(writableDataDirectory, "subscribers.local.json");
 
 const state = {
   jobs: [],
@@ -36,7 +46,40 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use("/data", express.static(path.join(__dirname, "data")));
 
 async function ensureDataDirectory() {
-  await fs.mkdir(dataDirectory, { recursive: true });
+  try {
+    await fs.mkdir(writableDataDirectory, { recursive: true });
+  } catch (error) {
+    if (!isServerless) {
+      throw error;
+    }
+    console.error("Kunde inte skapa " + writableDataDirectory + ":", error.message);
+  }
+}
+
+async function readFirstExisting(candidates) {
+  for (const candidate of candidates) {
+    try {
+      return await fs.readFile(candidate, "utf8");
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+
+  const missing = new Error("Ingen av filerna finns: " + candidates.join(", "));
+  missing.code = "ENOENT";
+  throw missing;
+}
+
+async function writeIfPossible(file, contents) {
+  try {
+    await fs.writeFile(file, contents, "utf8");
+    return true;
+  } catch (error) {
+    console.error("Kunde inte skriva " + file + ":", error.message);
+    return false;
+  }
 }
 
 function normalizeEmail(email = "") {
@@ -208,7 +251,9 @@ async function loadSubscriptions() {
   await ensureDataDirectory();
 
   try {
-    const stored = JSON.parse(await fs.readFile(subscribersFile, "utf8"));
+    const stored = JSON.parse(
+      await readFirstExisting([writableSubscribersFile, subscribersFile])
+    );
     subscriptionState.subscribers = Array.isArray(stored.subscribers)
       ? stored.subscribers
           .map((subscriber) => normalizeSubscriber(subscriber))
@@ -224,8 +269,8 @@ async function loadSubscriptions() {
 
 async function persistSubscriptions() {
   await ensureDataDirectory();
-  await fs.writeFile(
-    subscribersFile,
+  await writeIfPossible(
+    writableSubscribersFile,
     JSON.stringify(
       {
         subscribers: subscriptionState.subscribers,
@@ -233,8 +278,7 @@ async function persistSubscriptions() {
       },
       null,
       2
-    ),
-    "utf8"
+    )
   );
 }
 
@@ -352,8 +396,8 @@ function unsubscribeByToken(token = "") {
 
 async function persistCache() {
   await ensureDataDirectory();
-  await fs.writeFile(
-    cacheFile,
+  await writeIfPossible(
+    writableCacheFile,
     JSON.stringify(
       {
         jobs: state.jobs,
@@ -366,8 +410,7 @@ async function persistCache() {
       },
       null,
       2
-    ),
-    "utf8"
+    )
   );
 }
 
@@ -375,7 +418,7 @@ async function loadCache() {
   await ensureDataDirectory();
 
   try {
-    const cached = JSON.parse(await fs.readFile(cacheFile, "utf8"));
+    const cached = JSON.parse(await readFirstExisting([writableCacheFile, cacheFile]));
     Object.assign(state, {
       jobs: cached.jobs ?? [],
       sourceSummaries: cached.sourceSummaries ?? [],
@@ -1034,13 +1077,18 @@ app.post("/api/commute", async (req, res) => {
 });
 
 app.use((_req, res) => {
+  if (isServerless) {
+    res.status(404).json({ error: "Hittades inte" });
+    return;
+  }
+
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 await loadSubscriptions();
 await loadCache();
 
-if (!state.lastUpdated) {
+if (!state.lastUpdated && !isServerless) {
   try {
     await refreshJobs({ reason: "startup" });
   } catch (error) {
@@ -1048,15 +1096,20 @@ if (!state.lastUpdated) {
   }
 }
 
-setInterval(() => {
-  refreshJobs({ reason: "schedule" }).catch((error) => {
-    console.error("Schemalagd uppdatering misslyckades:", error);
-  });
-}, refreshIntervalMs);
+if (!isServerless) {
+  setInterval(() => {
+    refreshJobs({ reason: "schedule" }).catch((error) => {
+      console.error("Schemalagd uppdatering misslyckades:", error);
+    });
+  }, refreshIntervalMs);
+}
 
 state.nextScheduledRefreshAt ||= buildNextRefreshTimestamp();
 
-app.listen(port, () => {
-  console.log(`LĂ¤karjobb-servern kĂ¶r pĂĄ http://localhost:${port}`);
-});
+if (!isServerless) {
+  app.listen(port, () => {
+    console.log(`LĂ¤karjobb-servern kĂ¶r pĂĄ http://localhost:${port}`);
+  });
+}
 
+export default app;

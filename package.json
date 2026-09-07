@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "build:cache": "node scripts/build-cache.js"
+    "build": "node scripts/build-static.js",
+    "build:cache": "node scripts/build-cache.js",
+    "smoke": "node scripts/smoke-serverless.mjs"
   },
   "engines": {
     "node": ">=20"
