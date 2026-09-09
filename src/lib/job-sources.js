@@ -99,6 +99,10 @@ const sources = [
     name: "Arbetsförmedlingen",
     url: "https://arbetsformedlingen.se/platsbanken/annonser?q=l%C3%A4kare",
     allowHref: ["/platsbanken/annonser/"],
+    // Platsbanken renderas i webbläsaren, så HTML-skrapningen gav noll träffar.
+    // JobTech Devs öppna sök-API är samma annonsdatabas, gratis och utan nyckel.
+    collect: collectArbetsformedlingen,
+    skipDetailFetch: true,
   },
   {
     id: "internetmedicin",
@@ -110,7 +114,8 @@ const sources = [
   {
     id: "vakanser",
     name: "Vakanser.se",
-    url: "https://vakanser.se/jobb/lakare/",
+    // /jobb/lakare/ ar en sokruta utan traffar; lakarlistan ligger pa /alla/lakarjobb/.
+    url: "https://vakanser.se/alla/lakarjobb/",
     allowHref: ["/jobb/"],
   },
   {
@@ -166,6 +171,129 @@ async function fetchHtml(source) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+const arbetsformedlingenApiUrl = "https://jobsearch.api.jobtechdev.se/search";
+const arbetsformedlingenPageSize = 100;
+const arbetsformedlingenPages = 2;
+
+async function fetchJson(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        "accept-language": "sv-SE,sv;q=0.9,en;q=0.8",
+        "user-agent": "Jobbans-kanDrSwe/1.0 (jobbevakning for lakare)",
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function deadlineHasPassed(deadline) {
+  if (!deadline) {
+    return false;
+  }
+
+  const parsed = Date.parse(deadline);
+  return Number.isFinite(parsed) && parsed < Date.now();
+}
+
+async function collectArbetsformedlingen(source) {
+  const candidates = [];
+  const seenLinks = new Set();
+
+  for (let page = 0; page < arbetsformedlingenPages; page += 1) {
+    const url = `${arbetsformedlingenApiUrl}?q=l%C3%A4kare&limit=${arbetsformedlingenPageSize}&offset=${
+      page * arbetsformedlingenPageSize
+    }&sort=pubdate-desc`;
+
+    const payload = await fetchJson(url);
+    const hits = Array.isArray(payload?.hits) ? payload.hits : [];
+
+    if (!hits.length) {
+      break;
+    }
+
+    for (const hit of hits) {
+      const title = summarizeTitle(hit?.headline ?? "");
+      const rawLink = hit?.webpage_url ?? "";
+
+      if (!title || !rawLink) {
+        continue;
+      }
+
+      const link = cleanUrl(rawLink);
+      if (seenLinks.has(link)) {
+        continue;
+      }
+
+      const description = normalizeWhitespace(hit?.description?.text ?? "").slice(0, 1200);
+      const employer = normalizeWhitespace(hit?.employer?.name ?? "");
+      const address = hit?.workplace_address ?? {};
+      const location = normalizeWhitespace(address.municipality || address.city || address.region || "");
+      const deadline = hit?.application_deadline ?? "";
+      const deadlineText = deadline ? `Sista ansökningsdag ${deadline.slice(0, 10)}` : "";
+      const combined = normalizeWhitespace(
+        [title, hit?.occupation?.label, employer, location, deadlineText, description]
+          .filter(Boolean)
+          .join(" | ")
+      );
+
+      const category = classifyJob(title, combined);
+      if (!category) {
+        continue;
+      }
+
+      if (
+        containsExcludedNonDoctorRole(title) ||
+        /psykolog|arbetsterapeut|fysioterapeut|tandlakare/i.test(title) ||
+        deadlineHasPassed(deadline) ||
+        hasExpiredDeadlineNotice(combined)
+      ) {
+        continue;
+      }
+
+      seenLinks.add(link);
+
+      candidates.push({
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceUrl: source.url,
+        title,
+        category,
+        roleLabel: inferRoleLabel(title, combined),
+        roleSummary: buildRoleSummary(title, combined),
+        location: location || extractLocation(combined),
+        employer: employer || extractEmployerSafe(combined, source.name),
+        startInfo: extractStartInfoSafe(combined),
+        publishedAt: hit?.publication_date ? hit.publication_date.slice(0, 19) : extractDate(combined),
+        link,
+        stockholmMatch: matchesStockholm(combined),
+        uppsalaMatch: matchesUppsala(combined),
+        rawContext: combined,
+        detailSnippet: description.slice(0, 320),
+        contacts: extractContactEntries(combined, employer || source.name),
+      });
+    }
+
+    if (hits.length < arbetsformedlingenPageSize) {
+      break;
+    }
+  }
+
+  return candidates;
 }
 
 function extractDocumentText(html = "") {
@@ -552,11 +680,14 @@ export async function aggregateJobs({ previousHistory = {} } = {}) {
 
   for (const source of sources) {
     try {
-      const html = await fetchHtml(source);
-      const sourceJobs = dedupeWithinRefresh(extractCandidates(html, source));
-      const enrichedSourceJobs = (
-        await mapWithConcurrency(sourceJobs, detailConcurrency, (job) => enrichJobFromDetail(job, source))
-      ).filter(Boolean);
+      const sourceJobs = dedupeWithinRefresh(
+        source.collect ? await source.collect(source) : extractCandidates(await fetchHtml(source), source)
+      );
+      const enrichedSourceJobs = source.skipDetailFetch
+        ? sourceJobs
+        : (
+            await mapWithConcurrency(sourceJobs, detailConcurrency, (job) => enrichJobFromDetail(job, source))
+          ).filter(Boolean);
 
       collectedJobs.push(...enrichedSourceJobs);
       sourceSummaries.push({
