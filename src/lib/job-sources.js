@@ -140,9 +140,11 @@ const sources = [
   {
     id: "region-uppsala",
     name: "Region Uppsala",
-    url: "https://regionuppsala.se/jobba-hos-oss/lediga-tjanster/?occupationGroup=0&query=l%C3%A4kare&sortBy=enddate&summerJob=false",
-    allowHref: ["/jobba-hos-oss/lediga-tjanster/"],
-    requireContext: ["Lediga jobb i Region Uppsala", "ST-läkare", "Specialistläkare"],
+    url: "https://regionuppsala.se/jobb-och-utbildning/lediga-tjanster/?occupationGroup=0&query=l%C3%A4kare&sortBy=enddate&summerJob=false",
+    allowHref: ["/jobb-och-utbildning/lediga-tjanster/"],
+    // Listan renderas av en Vue-komponent, så HTML-skrapningen gav noll träffar.
+    // Samma data ligger bakom deras egen JSON-endpoint /api/VacancyApi/GetVacancies/.
+    collect: collectRegionUppsala,
   },
 ];
 
@@ -196,6 +198,42 @@ async function fetchJson(url) {
     }
 
     return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function postJson(url, body, extraHeaders = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json;charset=utf-8",
+        accept: "application/json, text/plain, */*",
+        "accept-language": "sv-SE,sv;q=0.9,en;q=0.8",
+        "user-agent": "Jobbans-kanDrSwe/1.0 (jobbevakning for lakare)",
+        ...extraHeaders,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+
+    try {
+      // Region Uppsala svarar med HTTP 200 + en HTML-felsida när payloaden är fel,
+      // så JSON-parsningen är det enda som avslöjar ett trasigt anrop.
+      return JSON.parse(text.replace(/^﻿/, ""));
+    } catch {
+      throw new Error("Svaret var inte JSON");
+    }
   } finally {
     clearTimeout(timeout);
   }
@@ -289,6 +327,123 @@ async function collectArbetsformedlingen(source) {
     }
 
     if (hits.length < arbetsformedlingenPageSize) {
+      break;
+    }
+  }
+
+  return candidates;
+}
+
+const regionUppsalaApiUrl = "https://regionuppsala.se/api/VacancyApi/GetVacancies/";
+const regionUppsalaListUrl = "https://regionuppsala.se/jobb-och-utbildning/lediga-tjanster/";
+const regionUppsalaPageSize = 100;
+const regionUppsalaMaxPages = 5;
+// CurrentPageId kommer från :model på <vacancy-list> i deras egen sida.
+const regionUppsalaCurrentPageId = 18;
+
+async function collectRegionUppsala(source) {
+  const candidates = [];
+  const seenLinks = new Set();
+
+  for (let page = 1; page <= regionUppsalaMaxPages; page += 1) {
+    const payload = await postJson(
+      regionUppsalaApiUrl,
+      {
+        RegionId: 0,
+        AdministrationId: 0,
+        // SelectedAdministrations måste vara null - både [] och utelämnat fält ger felsida.
+        SelectedAdministrations: null,
+        OccupationGroup: "0",
+        SummerJob: false,
+        SortBy: "enddate",
+        Page: page,
+        PageSize: regionUppsalaPageSize,
+        // Deras fritextsök viker inte å/ä/ö, så vi hämtar hela listan och filtrerar själva.
+        SearchQuery: "",
+        CurrentPageId: regionUppsalaCurrentPageId,
+      },
+      { referer: regionUppsalaListUrl }
+    );
+
+    const items = Array.isArray(payload?.VacancyListItems) ? payload.VacancyListItems : [];
+    if (!items.length) {
+      break;
+    }
+
+    for (const item of items) {
+      const title = summarizeTitle(item?.Heading ?? "");
+      const rawLink = item?.Url ?? "";
+
+      if (!title || !rawLink) {
+        continue;
+      }
+
+      const absoluteLink = absolutize(regionUppsalaListUrl, rawLink);
+      if (!absoluteLink) {
+        continue;
+      }
+
+      const link = cleanUrl(absoluteLink);
+      if (seenLinks.has(link)) {
+        continue;
+      }
+
+      const location = normalizeWhitespace(item?.Region ?? "");
+      const employer = normalizeWhitespace(item?.Administration ?? "");
+      const occupationGroup = normalizeWhitespace(item?.OccupationGroup ?? "");
+      const deadline = typeof item?.EndDate === "string" ? item.EndDate.slice(0, 10) : "";
+      const deadlineText = deadline ? `Sista ansökningsdag ${deadline}` : "";
+      const combined = normalizeWhitespace(
+        [title, occupationGroup, "Lediga jobb i Region Uppsala", employer, location, deadlineText]
+          .filter(Boolean)
+          .join(" | ")
+      );
+
+      // Yrkesgruppen är annonsens egen tagg och är mer tillförlitlig än rubriken,
+      // som annars gör "HR-specialist" och "Avdelningschef" till läkarjobb.
+      if (occupationGroup && !/läkare/i.test(occupationGroup) && !/läkare/i.test(title)) {
+        continue;
+      }
+
+      const category = classifyJob(title, combined);
+      if (!category) {
+        continue;
+      }
+
+      if (
+        containsExcludedNonDoctorRole(title) ||
+        /psykolog|arbetsterapeut|fysioterapeut|tandlakare/i.test(title) ||
+        // EndDate är bara ett datum - jobbet går att söka hela sista dagen.
+        deadlineHasPassed(deadline ? `${deadline}T23:59:59` : "") ||
+        hasExpiredDeadlineNotice(combined)
+      ) {
+        continue;
+      }
+
+      seenLinks.add(link);
+
+      candidates.push({
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceUrl: source.url,
+        title,
+        category,
+        roleLabel: inferRoleLabel(title, combined),
+        roleSummary: buildRoleSummary(title, combined),
+        location: location || extractLocation(combined),
+        employer: employer || extractEmployerSafe(combined, source.name),
+        startInfo: extractStartInfoSafe(combined),
+        publishedAt: extractDate(combined),
+        link,
+        stockholmMatch: matchesStockholm(combined),
+        uppsalaMatch: matchesUppsala(combined),
+        rawContext: combined,
+        contacts: [],
+      });
+    }
+
+    const totalCount = Number(payload?.TotalCount) || 0;
+    if (items.length < regionUppsalaPageSize || page * regionUppsalaPageSize >= totalCount) {
       break;
     }
   }
