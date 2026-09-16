@@ -148,7 +148,7 @@ function createNotificationSettings(settings = {}) {
     : [];
   const categories = Array.isArray(settings.categories)
     ? settings.categories.slice(0, 12)
-    : ["UnderlĂ¤kare", "BT-lĂ¤kare", "ST-lĂ¤kare", "Legitimerad lĂ¤kare", "Specialist"];
+    : ["Underläkare", "BT-läkare", "ST-läkare", "Legitimerad läkare", "Specialist"];
   return {
     enabled: Boolean(settings.enabled),
     intervalUnit: interval.intervalUnit,
@@ -157,7 +157,7 @@ function createNotificationSettings(settings = {}) {
     templates: templates.length ? templates : ["stockholm", "uppsala", "hela-sverige"],
     categories: categories.length
       ? categories
-      : ["UnderlĂ¤kare", "BT-lĂ¤kare", "ST-lĂ¤kare", "Legitimerad lĂ¤kare", "Specialist"],
+      : ["Underläkare", "BT-läkare", "ST-läkare", "Legitimerad läkare", "Specialist"],
   };
 }
 
@@ -208,9 +208,9 @@ function buildFallbackCommuteResults(origin, destination) {
       id: "driving",
       label: "Bil",
       pill: "Bil",
-      durationText: "BerĂ¤knas i Google Maps",
-      distanceText: "Ă–ppna lĂ¤nk fĂ¶r exakt restid",
-      note: "Google Maps Ă¶ppnas med biltrafik och aktuell vardagstrafik fĂ¶r den valda tiden.",
+      durationText: "Beräknas i Google Maps",
+      distanceText: "Öppna länk för exakt restid",
+      note: "Google Maps öppnas med biltrafik och aktuell vardagstrafik för den valda tiden.",
       link: buildGoogleMapsLink({ origin, destination, modeId: "driving" }),
       visualWidth: 34,
     },
@@ -218,19 +218,19 @@ function buildFallbackCommuteResults(origin, destination) {
       id: "bus",
       label: "Buss",
       pill: "Kollektivt",
-      durationText: "BerĂ¤knas i Google Maps",
-      distanceText: "Ă–ppna lĂ¤nk fĂ¶r exakt restid",
-      note: "Google Maps Ă¶ppnas i kollektivtrafiklĂ¤ge. Buss och byten rĂ¤knas dĂ¤r.",
+      durationText: "Beräknas i Google Maps",
+      distanceText: "Öppna länk för exakt restid",
+      note: "Google Maps öppnas i kollektivtrafikläge. Buss och byten räknas där.",
       link: buildGoogleMapsLink({ origin, destination, modeId: "bus" }),
       visualWidth: 34,
     },
     {
       id: "rail",
-      label: "TĂĄg",
+      label: "Tåg",
       pill: "Kollektivt",
-      durationText: "BerĂ¤knas i Google Maps",
-      distanceText: "Ă–ppna lĂ¤nk fĂ¶r exakt restid",
-      note: "Google Maps Ă¶ppnas i kollektivtrafiklĂ¤ge. TĂĄg och byten rĂ¤knas dĂ¤r.",
+      durationText: "Beräknas i Google Maps",
+      distanceText: "Öppna länk för exakt restid",
+      note: "Google Maps öppnas i kollektivtrafikläge. Tåg och byten räknas där.",
       link: buildGoogleMapsLink({ origin, destination, modeId: "rail" }),
       visualWidth: 34,
     },
@@ -238,9 +238,9 @@ function buildFallbackCommuteResults(origin, destination) {
       id: "bicycling",
       label: "Cykel",
       pill: "Cykel",
-      durationText: "BerĂ¤knas i Google Maps",
-      distanceText: "Ă–ppna lĂ¤nk fĂ¶r exakt restid",
-      note: "Google Maps Ă¶ppnas i cykellĂ¤ge sĂĄ att du snabbt kan jĂ¤mfĂ¶ra med andra alternativ.",
+      durationText: "Beräknas i Google Maps",
+      distanceText: "Öppna länk för exakt restid",
+      note: "Google Maps öppnas i cykelläge så att du snabbt kan jämföra med andra alternativ.",
       link: buildGoogleMapsLink({ origin, destination, modeId: "bicycling" }),
       visualWidth: 34,
     },
@@ -262,7 +262,7 @@ async function loadSubscriptions() {
     subscriptionState.updatedAt = stored.updatedAt ?? null;
   } catch (error) {
     if (error.code !== "ENOENT") {
-      console.error("Kunde inte lĂ¤sa lokal prenumerationsfil:", error);
+      console.error("Kunde inte läsa lokal prenumerationsfil:", error);
     }
   }
 }
@@ -430,7 +430,7 @@ async function loadCache() {
     });
   } catch (error) {
     if (error.code !== "ENOENT") {
-      console.error("Kunde inte lĂ¤sa cachefil:", error);
+      console.error("Kunde inte läsa cachefil:", error);
     }
   }
 }
@@ -474,7 +474,7 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
     return {
       results: buildFallbackCommuteResults(origin, destination),
       message:
-        "Google Maps-nyckel saknas pĂĄ servern. DĂ¤rfĂ¶r visas fĂ¤rdiga lĂ¤nkar men inte exakta restider Ă¤nnu.",
+        "Google Maps-nyckel saknas på servern. Därför visas färdiga länkar men inte exakta restider ännu.",
     };
   }
 
@@ -482,7 +482,7 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
   const definitions = [
     { id: "driving", label: "Bil", pill: "Bil", mode: "driving" },
     { id: "bus", label: "Buss", pill: "Kollektivt", mode: "transit", transitMode: "bus" },
-    { id: "rail", label: "TĂĄg", pill: "Kollektivt", mode: "transit", transitMode: "rail" },
+    { id: "rail", label: "Tåg", pill: "Kollektivt", mode: "transit", transitMode: "rail" },
     { id: "bicycling", label: "Cykel", pill: "Cykel", mode: "bicycling" },
   ];
 
@@ -519,14 +519,14 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
           pill: definition.pill,
           durationText: "Ingen rutt hittades",
           distanceText: "Kontrollera adressen",
-          note: "Google Maps kunde inte hitta en tydlig rutt fĂ¶r den hĂ¤r kombinationen Ă¤nnu.",
+          note: "Google Maps kunde inte hitta en tydlig rutt för den här kombinationen ännu.",
           link: buildGoogleMapsLink({ origin, destination, modeId: definition.id }),
           visualWidth: 20,
         };
       }
 
       const durationSeconds = leg.duration_in_traffic?.value ?? leg.duration?.value ?? 0;
-      const distanceText = leg.distance?.text ?? "OkĂ¤nd distans";
+      const distanceText = leg.distance?.text ?? "Okänd distans";
       const summary = payload.routes?.[0]?.summary;
 
       return {
@@ -536,8 +536,8 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
         durationText: formatDuration(durationSeconds),
         distanceText,
         note: summary
-          ? `Google Maps fĂ¶reslĂĄr rutten via ${summary}.`
-          : "BerĂ¤knat utifrĂĄn vald avresetid och aktuell ruttlogik i Google Maps.",
+          ? `Google Maps föreslår rutten via ${summary}.`
+          : "Beräknat utifrån vald avresetid och aktuell ruttlogik i Google Maps.",
         link: buildGoogleMapsLink({ origin, destination, modeId: definition.id }),
         visualWidth: estimateVisualWidth(durationSeconds),
       };
@@ -546,7 +546,7 @@ async function fetchGoogleCommuteResults({ origin, destination, departureAt }) {
 
   return {
     results,
-    message: "Restider hĂ¤mtade frĂĄn Google Maps och klara att jĂ¤mfĂ¶ra.",
+    message: "Restider hämtade från Google Maps och klara att jämföra.",
   };
 }
 
@@ -608,16 +608,16 @@ function buildNotificationEmailHtml(subscriber, jobsForSubscriber, baseUrl) {
           <div style="padding:16px;border:1px solid #d8e6ee;border-radius:16px;background:#ffffff;">
             <strong style="display:block;font-size:16px;color:#10212b;">${job.title}</strong>
             <span style="display:block;margin-top:6px;color:#45606c;font-size:13px;">
-              ${job.category} Â· ${job.roleLabel ?? "LĂ¤kare"} Â· ${job.employer || "Arbetsgivare ej angiven"}
+              ${job.category} · ${job.roleLabel ?? "Läkare"} · ${job.employer || "Arbetsgivare ej angiven"}
             </span>
             <span style="display:block;margin-top:4px;color:#45606c;font-size:13px;">
-              ${job.location || "OkĂ¤nd ort"} Â· ${job.sourceNames?.join(", ") || job.sourceName || "OkĂ¤nd kĂ¤lla"}
+              ${job.location || "Okänd ort"} · ${job.sourceNames?.join(", ") || job.sourceName || "Okänd källa"}
             </span>
             <p style="margin:10px 0 0;color:#2d4754;font-size:14px;line-height:1.6;">
-              ${job.roleSummary || "Ny matchande annons upptĂ¤ckt."}
+              ${job.roleSummary || "Ny matchande annons upptäckt."}
             </p>
             <a href="${job.link}" style="display:inline-block;margin-top:12px;color:#0f7c8c;text-decoration:none;font-weight:700;">
-              Ă–ppna annons
+              Öppna annons
             </a>
           </div>
         </li>
@@ -628,15 +628,15 @@ function buildNotificationEmailHtml(subscriber, jobsForSubscriber, baseUrl) {
   return `
     <div style="font-family:Arial,sans-serif;background:#f4f8fb;padding:24px;color:#10212b;">
       <div style="max-width:760px;margin:0 auto;">
-        <h1 style="margin:0 0 8px;font-size:28px;">Nya lĂ¤karjobb matchar ditt konto</h1>
+        <h1 style="margin:0 0 8px;font-size:28px;">Nya läkarjobb matchar ditt konto</h1>
         <p style="margin:0 0 18px;line-height:1.6;color:#45606c;">
-          Hej. HĂ¤r Ă¤r ${jobsForSubscriber.length} nya annons${jobsForSubscriber.length === 1 ? "" : "er"} som matchar dina val fĂ¶r ${subscriber.email}.
+          Hej. Här är ${jobsForSubscriber.length} nya annons${jobsForSubscriber.length === 1 ? "" : "er"} som matchar dina val för ${subscriber.email}.
         </p>
         <ul style="margin:0;padding:0;">${items}</ul>
         ${
           unsubscribeLink
             ? `<p style="margin-top:18px;color:#45606c;font-size:13px;line-height:1.6;">
-                 Vill du inte ha fler notiser? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig hĂ¤r</a>.
+                 Vill du inte ha fler notiser? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig här</a>.
                </p>`
             : ""
         }
@@ -653,7 +653,7 @@ function buildSubscriptionWelcomeEmailHtml(subscriber, baseUrl) {
   return `
     <div style="font-family:Arial,sans-serif;background:#f4f8fb;padding:24px;color:#10212b;">
       <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #d8e6ee;border-radius:20px;padding:24px;">
-        <h1 style="margin:0 0 10px;font-size:28px;">Din prenumeration Ă¤r nu kopplad</h1>
+        <h1 style="margin:0 0 10px;font-size:28px;">Din prenumeration är nu kopplad</h1>
         <p style="margin:0 0 14px;line-height:1.7;color:#45606c;">
           Profilen <strong>${subscriber.profileName}</strong> skickar nu jobbnotiser till <strong>${subscriber.email}</strong>.
         </p>
@@ -661,13 +661,13 @@ function buildSubscriptionWelcomeEmailHtml(subscriber, baseUrl) {
           Intervall: var ${subscriber.notifications.intervalValue} ${subscriber.notifications.intervalUnit === "days" ? "dag" : "timme"}${subscriber.notifications.intervalValue === 1 ? "" : "r"}.
         </p>
         <p style="margin:0 0 14px;line-height:1.7;color:#45606c;">
-          OmrĂĄden: ${subscriber.notifications.templates.length ? subscriber.notifications.templates.join(", ") : "alla"}.
+          Områden: ${subscriber.notifications.templates.length ? subscriber.notifications.templates.join(", ") : "alla"}.
           Roller: ${subscriber.notifications.categories.length ? subscriber.notifications.categories.join(", ") : "alla"}.
         </p>
         ${
           unsubscribeLink
             ? `<p style="margin:18px 0 0;color:#45606c;font-size:13px;line-height:1.6;">
-                 Vill du koppla bort notiserna? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig hĂ¤r</a>.
+                 Vill du koppla bort notiserna? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig här</a>.
                </p>`
             : ""
         }
@@ -684,17 +684,17 @@ function buildSubscriptionTestEmailHtml(subscriber, baseUrl) {
   return `
     <div style="font-family:Arial,sans-serif;background:#f4f8fb;padding:24px;color:#10212b;">
       <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #d8e6ee;border-radius:20px;padding:24px;">
-        <h1 style="margin:0 0 10px;font-size:28px;">Testmail frĂĄn LĂ¤karjobb Radar</h1>
+        <h1 style="margin:0 0 10px;font-size:28px;">Testmail från Läkarjobb Radar</h1>
         <p style="margin:0 0 14px;line-height:1.7;color:#45606c;">
-          Det hĂ¤r mailet bekrĂ¤ftar att prenumerationen fĂ¶r <strong>${subscriber.profileName}</strong> kan nĂĄ <strong>${subscriber.email}</strong>.
+          Det här mailet bekräftar att prenumerationen för <strong>${subscriber.profileName}</strong> kan nå <strong>${subscriber.email}</strong>.
         </p>
         <p style="margin:0 0 14px;line-height:1.7;color:#45606c;">
-          NĂ¤sta riktiga utskick kommer nĂ¤r nya annonser matchar dina val.
+          Nästa riktiga utskick kommer när nya annonser matchar dina val.
         </p>
         ${
           unsubscribeLink
             ? `<p style="margin:18px 0 0;color:#45606c;font-size:13px;line-height:1.6;">
-                 Vill du koppla bort notiserna? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig hĂ¤r</a>.
+                 Vill du koppla bort notiserna? <a href="${unsubscribeLink}" style="color:#0f7c8c;">Avregistrera dig här</a>.
                </p>`
             : ""
         }
@@ -856,7 +856,7 @@ async function refreshJobs({ reason = "manual" } = {}) {
     await sendEmailNotifications(state.jobs);
 
     console.log(
-      `[refresh:${reason}] ${state.jobs.length} jobb hĂ¤mtade frĂĄn ${state.sourceSummaries.length} kĂ¤llor`
+      `[refresh:${reason}] ${state.jobs.length} jobb hämtade från ${state.sourceSummaries.length} källor`
     );
   } catch (error) {
     state.lastError = error instanceof Error ? error.message : String(error);
@@ -883,7 +883,7 @@ app.get("/api/jobs", async (req, res) => {
   } catch (error) {
     res.status(500).json({
       ...payload(),
-      error: error instanceof Error ? error.message : "OkĂ¤nt fel",
+      error: error instanceof Error ? error.message : "Okänt fel",
     });
   }
 });
@@ -895,7 +895,7 @@ app.post("/api/refresh", async (_req, res) => {
   } catch (error) {
     res.status(500).json({
       ...payload(),
-      error: error instanceof Error ? error.message : "OkĂ¤nt fel",
+      error: error instanceof Error ? error.message : "Okänt fel",
     });
   }
 });
@@ -1018,7 +1018,7 @@ app.get("/unsubscribe", async (req, res) => {
   try {
     const token = String(req.query.token ?? "");
     if (!token) {
-      res.status(400).send("<h1>Ogiltig avregistreringslĂ¤nk</h1>");
+      res.status(400).send("<h1>Ogiltig avregistreringslänk</h1>");
       return;
     }
 
@@ -1038,13 +1038,13 @@ app.get("/unsubscribe", async (req, res) => {
           <title>Avregistrerad</title>
         </head>
         <body style="font-family:Arial,sans-serif;padding:32px;background:#f4f8fb;color:#10212b;">
-          <h1>Du Ă¤r nu avregistrerad</h1>
+          <h1>Du är nu avregistrerad</h1>
           <p>Inga fler jobbnotiser skickas till <strong>${subscriber.email}</strong>.</p>
         </body>
       </html>
     `);
   } catch (error) {
-    res.status(500).send(`<h1>NĂĄgot gick fel</h1><p>${error instanceof Error ? error.message : "OkĂ¤nt fel"}</p>`);
+    res.status(500).send(`<h1>Något gick fel</h1><p>${error instanceof Error ? error.message : "Okänt fel"}</p>`);
   }
 });
 
@@ -1055,7 +1055,7 @@ app.post("/api/commute", async (req, res) => {
     const departureAt = String(req.body?.departureAt ?? "").trim();
 
     if (!origin || !destination) {
-      res.status(400).json({ error: "BĂĄde start och destination behĂ¶vs." });
+      res.status(400).json({ error: "Både start och destination behövs." });
       return;
     }
 
@@ -1071,7 +1071,7 @@ app.post("/api/commute", async (req, res) => {
         String(req.body?.origin ?? ""),
         String(req.body?.destination ?? "")
       ),
-      message: error instanceof Error ? error.message : "Kunde inte rĂ¤kna restider just nu.",
+      message: error instanceof Error ? error.message : "Kunde inte räkna restider just nu.",
     });
   }
 });
@@ -1092,7 +1092,7 @@ if (!state.lastUpdated && !isServerless) {
   try {
     await refreshJobs({ reason: "startup" });
   } catch (error) {
-    console.error("FĂ¶rsta uppdateringen misslyckades:", error);
+    console.error("Första uppdateringen misslyckades:", error);
   }
 }
 
@@ -1108,7 +1108,7 @@ state.nextScheduledRefreshAt ||= buildNextRefreshTimestamp();
 
 if (!isServerless) {
   app.listen(port, () => {
-    console.log(`LĂ¤karjobb-servern kĂ¶r pĂĄ http://localhost:${port}`);
+    console.log(`Läkarjobb-servern kör på http://localhost:${port}`);
   });
 }
 
