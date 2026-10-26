@@ -9,7 +9,8 @@
     "dev": "node --watch server.js",
     "build": "node scripts/build-static.js",
     "build:cache": "node scripts/build-cache.js",
-    "smoke": "node scripts/smoke-serverless.mjs"
+    "smoke": "node scripts/smoke-serverless.mjs",
+    "veckokort": "node scripts/veckokort.mjs --post"
   },
   "engines": {
     "node": ">=20"
